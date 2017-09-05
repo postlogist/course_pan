@@ -1,0 +1,220 @@
+---
+title: "An introduction to data visualization using ggplot2"
+output: html_document
+date: 2016-09-13
+---
+
+# An introduction to data visualization using ggplot2
+
+## Introduction
+
+This file introduces basic concepts of plotting using the ggplot2 package, which implements grammar of graphics. This is a coherent system for describing and building graphs in R.
+
+Code chunks below can be executed by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r Load Libraries}
+library(ggplot2)
+library(dplyr)
+# you can use:
+# suppressMessages(library(dplyr))
+# to disable warning messages on package load
+```
+
+If you get the error message complaining about a missing package, you'll need to install it, for example:
+
+```r
+install.packages('ggplot2')
+```
+The package needs to be installed just once.
+
+You will work with two datasets that are built-in to ggplot package - `mpg` and `diamonds` to practice these concepts.
+
+```{r Load data}
+
+# Fuel efficiency dataset:
+data(mpg)
+
+# View data:
+# View(mpg)
+# or simply:
+# mpg
+
+# See help:
+# ?mpg
+
+# Diamonds dataset:
+data(diamonds)
+```
+
+## A graphing template
+
+Let's start with a simple scatterplot showing correlation between the car's engine size `displ` and fuel efficiency for highways `hwy`. You can see variable descriptions by running: `?mpg`.
+
+```{r Basic scatterplot}
+
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy))
+
+```
+
+**Note:** Make sure to always put + at the end of the line, not the start.
+
+The `ggplot` function creates a coordinate system that you can add layers into. You can provide the dataset for use in the plot as a first argument.
+
+```{r Empty plot}
+ggplot(data = mpg)
+```
+
+To actually see your data, you need to add some layers to the plot. To do so, you use different *geom* functions available in ggplot2 package. Each geom takes a mapping argument to associate variables available in the dataset with its visual properties, or *aesthetics*:
+
+```r
+ggplot(data = <DATA>) +
+  <GEOM_FUNCTION>(mapping = aes(<MAPPINGS>))
+```
+
+The *values* of a variable are mapped to *levels* of an aesthetic.
+
+For example, you can map car's class to the color:
+
+```{r Mapping colours to car classes}
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy, color = class))
+```
+
+For points, aesthetics include size, shape, color, alpha (transparency). Aesthetics available for other geometrical objects are compiled together [here](http://r4ds.had.co.nz/data-visualisation.html#geometric-objects).
+You can also check help: `?geom_point`.
+
+For each value of the variable, an uniue level of aesthetic is assigned (e.g. unique color). This assignment is controlled by a process known as *scaling*. The legend listing mappings between variables and levels is automatically included.
+
+You can control, how the scaling is done, for instance, by choosing the color map.
+
+```{r Alternative color palette}
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy, color = class)) + scale_color_brewer(palette = 'Accent')
+```
+
+see: `?scale_color_brewer`
+
+You can also map multiple variables to different aesthetics:
+```{r Mapping multiple variables}
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy, color = class, size = cyl, alpha = year))# +     
+  #scale_alpha_continuous(guide = FALSE)
+```
+
+The aesthetics can be controlled directly: e.g. you can assign a specific color to the points by explicitly *setting* it, as opposed to *mapping*.
+
+Compare the results:
+
+```{r Setting vs Mapping}
+# Mapping color to a variable
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy, color = class))
+
+# Setting color: using aesthetic's name outside of aes() function
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy), color = 'blue')
+
+# Accidental mapping: take care!
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy, color = 'blue'))
+
+```
+
+### Exercise - mapping
+
+Recreate the visualization shown on the slide using the `diamonds` dataset.
+See `?diamonds` if necessary
+
+You are advised to type the code in instead of pasting it. Use autocompletion (tab)!
+
+```{r Mapping exercise}
+# Your code here
+
+```
+
+
+## Facets
+
+The plot can be split into multiple subplots based on categorical variables. These subplots are known as *facets*.
+
+
+To facet your plot by a single variable use`facet_wrap()` function. It's first argument should be a *formula*, which you create with `~` (tilda) followed by a variable name. Formulas are a part of R syntax. The variable you pass should be discrete.
+
+```{r Faceting by a single variable example}
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy)) +
+  facet_wrap(~ class, nrow = 2)
+```
+
+
+To facet on two variables, use the `facet_grid()` function. The first variable in the formula controls rows, and the second - columns.
+
+```{r Faceting by two variables example}
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy)) +
+  facet_grid(drv ~ cyl)
+
+```
+
+
+Note that you can faced only one dimension, by omitting the second variable in the formula:
+
+```{r Faceting by one variable with facet_grid}
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy)) +
+  facet_grid(drv ~ .)
+
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy)) +
+  facet_wrap(~ cyl)
+```
+
+## Geometric objects
+
+To plot same data, multiple geometric objects (*geoms*) can be used. You can think of geoms as of different plot types. You can select the needed geom by adding the corresponding geom function to `ggplot()`.
+
+```{r Geom examples}
+
+# Points
+ggplot(data = mpg) + 
+  geom_point(mapping = aes(x = displ, y = hwy))
+
+# Smooth line
+ggplot(data = mpg) + 
+  geom_smooth(mapping = aes(x = displ, y = hwy), se = FALSE)
+
+# Both
+ggplot(data = mpg) + 
+  geom_point(mapping = aes(x = displ, y = hwy)) +
+  geom_smooth(mapping = aes(x = displ, y = hwy), se = FALSE)
+
+```
+
+**Note:** We use `se = FALSE` here to turn off confidence bands for the trend line.
+
+Consult [this link](http://r4ds.had.co.nz/images/visualization-geoms-3.png) to see what geoms are available and what's their aesthetics.
+
+You can control visual properties of geoms in multiple layers separately. In this example, both trends for subgroups and the overall group are added.
+
+```{r Adding multiple geoms}
+ggplot(data = mpg) + 
+  geom_point(mapping = aes(x = displ, y = hwy, color = drv)) +
+  geom_smooth(mapping = aes(x = displ, y = hwy, color = drv),
+              se = FALSE, linetype = 'dashed') +
+  geom_smooth(mapping = aes(x = displ, y = hwy),
+              se = FALSE, color = 'blue')
+```
+
+### Exercise - geoms
+
+Recreate the visualization shown on the slide using the `diamonds` dataset.
+See `?diamonds` if necessary
+
+You are advised to type the code in instead of pasting it. Use autocompletion (tab)!
+
+```{r Geoms Exercise}
+# Your code here
+
+```
+

@@ -1,0 +1,368 @@
+---
+title: "An introduction to data visualization using ggplot2, part 2"
+output: html_document
+date: 2016-09-13
+---
+
+# Introduction
+
+This file introduces basic concepts of plotting using the ggplot2 package, which implements grammar of graphics. This is a coherent system for describing and building graphs in R. This is the the second part of the tutorial, which covers the remaining 3 parts of the grammar - statistical transformations, position adjustments and coordinate systems.
+
+Code chunks below can be executed by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
+
+```{r Load Libraries}
+library(ggplot2)
+suppressMessages(library(dplyr))
+```
+
+You will continiue to work with two built-in datasets - `mpg` and `diamonds`.
+
+```{r Load data}
+
+# Fuel efficiency dataset:
+data(mpg)
+
+# Diamonds dataset:
+data(diamonds)
+```
+
+# A graphing template (reminder)
+
+To create a graph, you are combining one or more *layers*. Each layer is formed by a *geom* (geometric object). The visual properties of geoms (or *aesthetics*) are *mapped* to  variables in a dataset. A *scale* controls how the values of a variable are mapped to the levels of an aesthetic. Finally, the graph can be decomposed into several panels based on the values of a categorical variable. This process is known as *faceting*.  The template for plotting is therefore:
+
+```r
+ggplot(data = <DATA>) +
+  <GEOM_FUNCTION>(mapping = aes(<MAPPINGS>)) +
+  ... +
+  <SCALE_FUNCTION> +
+  <FACET_FUCTION>
+```
+
+```{r Example plot with 2 layers and faceting}
+ggplot(data = mpg) + 
+  geom_point(mapping = aes(x = displ, y = hwy, color = class)) +
+  geom_smooth(mapping = aes(x = displ, y = hwy), se = FALSE) +
+  scale_color_brewer(palette = 'Accent') + 
+  facet_wrap(~drv)
+```
+
+
+A cheat sheet for geoms and their aesthetics is [available](http://r4ds.had.co.nz/images/visualization-geoms-3.png).
+
+
+# Default mappings and local overrides
+
+The template we've been using so far is quite wordy. You can significantly reduce the effort by moving the mappings common to all the layers into the default mappings, provided in the `ggplot()` function call. Mappings, that are unique to specific levels can be provided in the geom functions as needed.
+
+```{r Example plot with default mappings}
+ggplot(data = mpg, mapping = aes(x = displ, y = hwy)) + 
+  geom_point(mapping = aes(color = class)) +
+  geom_smooth(se = FALSE)
+```
+
+Not only mappings, but also data can be overriden in a geom function for a particular layer. Let's highlight the cars manufactured by Dodge, for example:
+
+```{r Example for overriding data in a specific layer}
+ggplot(data = mpg, mapping = aes(x = displ, y = hwy)) + 
+  geom_point(data = filter(mpg, manufacturer == 'dodge'), 
+             color = 'white', size = 5) +
+  geom_point(mapping = aes(color = class)) +
+  geom_smooth(se = FALSE)
+```
+
+
+Here we are providing a separate dataset, containing only cars by Dodge to the `geom_point()` function in the first layer. Two next layers use the default dataset, provided in the `ggplot()` call.
+
+
+
+# Statistical transformations
+
+Let's take a look at a bar chart. This plot type is widely used to visualize a distribution of a discrete variable, or to compare groups based on some descriptive statistics.
+
+```{r Bar chart for distribution of diamond cuts}
+ggplot(data = diamonds) +
+  geom_bar(mapping = aes(x = cut))
+```
+
+
+```{r Names in the  diamonds dataset}
+names(diamonds)
+```
+
+
+As you can see, the x-axis is using a variable from the `diamonds` dataset. But the `count` variable isn't there. In contrast to scatterplots, which use raw data, bar plot first splits a dataset based on the values of the variable for the x-aesthetic, and then applies a *statistical transformation* function to get counts for each group. The short name for a statistical transformation in ggplot2 package is *stat*.
+
+![Statistical transformations](http://r4ds.had.co.nz/images/visualization-stat-bar.png)
+
+Other graphs also need to apply statistical transformations to data:
+
+ - *bar charts*, *histogtams*, *frequency polygons* bin the data first and then plot bin counts
+
+ - *smoothers* fit a model to the data and then plot predictions from the model
+ 
+ - *box plots* calculate the quartiles of the data and then plot the quartiles as a box
+
+
+Each geom in ggplot2 is associated with a default stat, that is automatically called to prepare values for a plot. If a geom needs raw data, the *identity transformation* is applied, so the `stat_identity()` function is called anyway. This transformation however leaves the input data intact. So the process for the `geom_point()` is the same.
+
+
+![Identity transformation for a geom](http://r4ds.had.co.nz/images/visualization-stat-point.png)
+
+You can learn which stat a geom uses and what variables it computes in the geom's help page. For example, the `geom_histogram()` uses the `stat_count()` transformation and computes 2 variables - `count`, `prop`. See `?geom_bar` to see the description.
+
+
+# Overriding default transformation and mappings
+
+You might want to override the default mapping from transformed variables to aesthetics. For example, a mapping in a bar plot can be changed to display proportions rather than count. The computed variable's name is surrounded by dots to distinguish it from the variables in the original data:
+
+```{r Bar plot for diamond }
+ggplot(data = diamonds) +
+  geom_bar(mapping = aes(x = cut, y = ..prop.., group = 1))
+# We need group = 1 here to use all data to compute proportions for each group. Otherwise, the proportions are calculated for each category independently, and thus are all equal to 1.
+```
+
+A second case when you might want to change the default behaviour of a geom is to replace the stat function itself. For example, you may want to use raw data to control the height of bars in a bar plot instead of counts. In this case you'll need to replace the default stat with the identity transformation.
+
+Let's compute and plot the average mileage for cars of each class.
+
+```{r Controlling height of the bars directly}
+
+# Compute average mileage for each car class
+class_mpg <- summarize(group_by(mpg, class), avg_hwy = mean(hwy))
+class_mpg
+
+# Plot average mileage
+ggplot(data = class_mpg) +
+  geom_bar(mapping = aes(x = class, y = avg_hwy), stat = "identity")
+
+# Plot average mileage, order by descending average highway mileage
+ggplot(data = class_mpg) +
+  geom_bar(mapping = 
+             aes(x = reorder(class, desc(avg_hwy)), y = avg_hwy),
+           stat = "identity")
+```
+
+# Plotting functions
+
+Package ggplot2 provides many stats for you to use. A cheat sheet with avialiable stats is available [here](http://r4ds.had.co.nz/images/visualization-stats.png).
+
+Each stat is available as a function which provides a convenient way to access a stat's help page (e.g. `?stat_function`). Since each stat function is associated with a default geom, you can add them directly as layers for your plot.
+
+Let's plot two functions in the range of (-1, 1):
+
+
+```{r Plotting arbitrary funcitons}
+ggplot(data = tibble(x = c(-pi, pi)), mapping = aes(x)) +
+  stat_function(fun = sin, color = 'red') +
+  stat_function(fun = function(x) { 0.2 * (x + 1)^2 - 1}, color = 'blue')
+```
+
+You can overlay function plots on top of data. Let's overlay a normal density function on top of city mileage to compare, if it fits the data well. R has a built-in `dnorm()` function to compute the normal density. It's parameters are the mean and the standard deviation.
+
+
+```{r Overlaying probability density funciton}
+# Compute parameters for the normal distribution
+params <- list(mean = mean(mpg$cty), sd = sd(mpg$cty))
+
+# Plot data and the density function
+ggplot(data = mpg, mapping = aes(x = cty)) +
+  geom_histogram(mapping = aes(y = ..density..), bins = 10) +
+  stat_function(fun = dnorm, args = params, xlim = c(0, 40), 
+                color = 'red', size = 1.5)
+```
+
+## Exercise - plotting distribution of diamond prices
+
+Plot a histogram of diamond prices based on the `diamonds` dataset. Try to recreate the plot:
+
+![Histogram of diamond prices](pics/diamond_prices.png)
+
+A list of color names available in R can be found [here](http://research.stowers-institute.org/efg/R/Color/Chart/ColorChart.pdf)
+
+The density function for this distribution is the exponential density function:
+
+$$ f(x) = \lambda e^{-\lambda x} $$
+
+where $\lambda$ is the *rate* parameter. You can estimate rate from the data using the formula:
+$$ \lambda = 1 / \bar{x} $$
+
+Define your own function with two arguments: x and rate, or use the built-in exponential density function - `dexp()`. See `?dexp`.
+
+The vertical reference line is positioned at the average price. See `?geom_vline` for help on how to add it.
+
+
+```{r Code for exercise on distribution of diamond prices}
+# Your code here
+
+
+```
+
+# Position adjustments
+## Bar charts
+
+Bar charts are commonly used to display the interaction between two or more categorical variables. You can plot interactions by mapping these variables to different aesthetics. For example, you can plot the counts for each combination of `cut` and `clarity` variables:
+
+```{r Interaction between cut and clarity - stacked bars}
+ggplot(data = diamonds) +
+  geom_bar(mapping = aes(x = clarity, fill = cut))
+```
+
+By default, the bars are automatically stacked. Each colored rectangle is a combination of different cut types for a given clarity grade. Other options can be selected by the position adjustment using the `position = ` argument.
+
+ - `postition = identity` will place each object on top of the others. It's not so useful for bars, since it overlaps them.
+
+```{r Interaction between cut and clarity - identity}
+ggplot(data = diamonds) +
+  geom_bar(mapping = aes(x = clarity, color = cut), 
+           position = 'identity', 
+           fill = NA) #disable fill
+```
+
+The identity position is more useful for 2d geoms, like points, where it is the default.
+
+- `position = fill` works like stacking, but it normalizes each set of stacked bars to the same height. This makes it easier to compare proportions across groups.
+
+```{r Interaction between cut and clarity - position fill}
+ggplot(data = diamonds) +
+  geom_bar(mapping = aes(x = clarity, fill = cut),
+           position = 'fill')
+```
+
+*Note:* diamonds with `IF` (internally flawless) clarity rating have the best quality. Cf. charts on diamond [clarity](http://www.lumeradiamonds.com/diamond-education/diamond-clarity) and [cut](http://www.gemnation.com/base?processor=getPage&pageName=cut) grades.
+
+- `position = dodge` places bars directly beside one another. This makes it easier to compare individual values.
+
+```{r Interaction between cut and clarity - position dodge}
+ggplot(data = diamonds) +
+  geom_bar(mapping = aes(x = clarity, fill = cut),
+           position = 'dodge')
+```
+
+
+## Scatterplots
+
+The other type of adjustment is useful for scatterplots. Sometimes you can't see how much data is plotted due to *overplotting*, when the points are exactly on top of each other.
+
+
+```{r Displpacement vs mileage with overplotting}
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy))
+```
+
+You can see the overlaid point by applying transparency.
+
+```{r Displpacement vs mileage with transparency}
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy), alpha = 0.2)
+```
+
+This is due to the values of `hwy` and `disp` are rounded and appear on a grid.
+
+You can avoid overplotting by introducing some random noise to point's positions. This is done by using the `position = jitter` adjustment.
+
+```{r Displpacement vs mileage with jitter}
+ggplot(data = mpg) +
+  geom_point(mapping = aes(x = displ, y = hwy), color = 'lightskyblue',
+             position = 'jitter') + 
+  geom_point(mapping = aes(x = displ, y = hwy), alpha = 0.2)
+```
+
+You can see much more points now. To simplify jittering operation, ggplot2 includes a shortcut for `geom_point(position = 'jitter'): geom_jitter()`
+
+```{r Displpacement vs mileage with geom_jitter}
+ggplot(data = mpg) +
+  geom_jitter(mapping = aes(x = displ, y = hwy))
+```
+
+
+More information about a position adjustment is available in the help pages:
+`?position_dodge`, `?position_fill`, `?position_identity`, `?position_jitter`, `?position_stack`.
+
+# Coordinate systems
+Coordinate systems control how the data is plotted. They map objects' positions to the screen coordinates. For now, we'll consider just a couple of examples, where adjustments for coordinate systems are helpful.
+
+
+## Flipping coordinates
+The `coord_flip()` function switches x and y axes. This is useful if you want the categories on a box or a bar plot on the y axis to improve readability.
+
+```{r Flipping axes for a box plot}
+
+# Default behavior - overlapped labels
+ggplot(data = mpg, mapping = aes(x = manufacturer, y = hwy)) +
+  geom_boxplot()
+
+# Flipping coordinates to improve label readability
+ggplot(data = mpg, mapping = aes(x = manufacturer, y = hwy)) +
+  geom_boxplot() +
+  coord_flip()
+```
+
+## Setting axis limits
+
+The second case when tweaking a coordinate system is necessary is setting limits for an axis. The `coord_cartesian()` and `coord_flip()` coordinate functions have `xlim` and `ylim` arguments to control the axis range.
+
+```{r Setting axis limits}
+# Default behavior
+ggplot(data = mpg, mapping = aes(x = cty, y = hwy)) +
+  geom_point()
+
+# Zooming-in on a range
+ggplot(data = mpg, mapping = aes(x = cty, y = hwy)) +
+  geom_point() + 
+  coord_cartesian(xlim = c(15, 25), ylim = c(20, 30))
+```
+
+You can learn about the available coordinate systems in the [R4DS](http://r4ds.had.co.nz/data-visualisation.html#coordinate-systems) book. A cheat sheet for them is [here](http://r4ds.had.co.nz/images/visualization-coordinate-systems.png).
+
+
+# Exercise - putting it all together
+
+Compare distribution of diamond prices for each clarity class. Try to recreate the plot:
+
+![Histogram of diamond prices](pics/diamond_boxplot.png)
+
+The dashed line is the median price for all diamonds. Note the range for the `price` axis.
+
+```{r Exercise - boxplots for diamond prices}
+# Your code here
+
+```
+
+# The layered grammar of graphics
+
+In this tutorial, you've learned the most important parts of the grammar of graphics - a formal system for building plots. This approach can be used to compose *any* plot as a combination of a *dataset*, a *geom*, a set of *mappings*, a *stat*, a *scale*, a *coordinate system* and a *faceting schema*: 
+
+```r
+ggplot(data = <DATA>) +
+  <GEOM_FUNCTION>(mapping = aes(<MAPPINGS>,
+                  stat = <STAT>,
+                  position = <POSITION>)
+  ) +
+  <SCALE_FUNCTION> +
+  <COORDINATE_FUNCTION> +
+  <FACET_FUCTION>
+```
+
+There are sensible defaults, so you rarely need to include all parts and can usually proceed just with the bare minimum of a dataset, a geom and a set of mappings.
+
+To review how grammar of graphics works, consider how a basic plot is constructed starting with a dataset.
+
+First, the *dataset* is loaded and a *statistical transformation* is applied. This transformation is required to compute the information about data you want to plot (e.g. frequencies).
+
+![Computing statistics](http://r4ds.had.co.nz/images/visualization-grammar-1.png)
+
+Next, you choose a *geometric object* to represent each observation in the transformed data. You can then *map the aesthetic properties* of the geoms to variables in the data. The values of each variable is mapped to the levels of an aesthetic. A *scale* function is used to control the details of how mapping is done.
+
+![Mapping aesthetics](http://r4ds.had.co.nz/images/visualization-grammar-2.png)
+
+You can select a coordinate system to place the geoms into. By default, a cartesian coorinate system is selected.
+
+![Selecting the coordinate system](http://r4ds.had.co.nz/images/visualization-grammar-3.png)
+
+At this point, the plot is complete. But you could further adjust the positions of the geoms within the coordinate system (a position adjustment) or split the plot into subplots (faceting). You could also add more layers to the plot by adding more geoms. Each layer can use a separate set of mappings, and even a separate dataset.
+
+# Next steps
+
+To create clear and good looking plots, you'll also need to learn some functions for plot labelling, annotation and formatting. A good introduction to them is available in the [Graphics for communication] (http://r4ds.had.co.nz/graphics-for-communication.html) chapter of the [R4DS] book.
+
+You can find an awesome cheat sheet for [data visualization in ggpplot2](https://www.rstudio.com/wp-content/uploads/2015/12/ggplot2-cheatsheet-2.0.pdf) on the RStudio website. And they have [more](https://www.rstudio.com/resources/cheatsheets/).
