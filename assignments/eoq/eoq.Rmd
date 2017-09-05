@@ -1,0 +1,34 @@
+---
+title: "Plotting functions (optional assignment)"
+author: <your name here>
+output: html_document
+---
+
+## Assignment
+
+Recreate the plot from Wikipedia page on [Economic Order Quantity](https://en.wikipedia.org/wiki/Economic_order_quantity).
+Economic Order Quantity is a famous model developed for inventory management about 100 years ago by Ford Harris and later popularized by Wilson. It calculates the order quantity to minimize total inventory cost given the demand, the unit inventory holding cost and the ordering cost. Use the parameters (demand, costs, etc.) provided on that page.
+
+**Tip**
+
+You may find helpful the chapter on [graphics for communication](http://r4ds.had.co.nz/graphics-for-communication.html) in R for Data Science book, as well as [this advice](http://stackoverflow.com/questions/18060116/adding-legend-to-ggplot-when-lines-were-added-manually) on how to add lines to a legend on Stack Overflow.
+
+![Economic Order Quantity plot](eoq.png)
+
+## Instructions on how to submit your solution
+
+1. Download this Rmarkdown file to your computer. Note, that it requires a picture file - `eoq.png` to reside next to it.
+
+2. Put your code producing the plot in the following code chunk. 
+
+3. Press `Preview` button on the toolbar in RStudio. This should create a `eoq.nb.html` file in the same folder as `eoq.Rmd` (this file).
+
+4. Send me the resulting `eoq.html` file. 
+
+Remember to put your name(s) in the `author:` field on top of this document.
+
+```{r EOQ Plot}
+# Your code here
+
+```
+
