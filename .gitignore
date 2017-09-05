@@ -1,9 +1,13 @@
+# me
+hidden/
+
+# knitr temp files
+*_cache/
+*_files/
+
 # History files
 .Rhistory
 .Rapp.history
-
-# Session Data files
-.RData
 
 # Example code in package build process
 *-Ex.R
@@ -14,6 +18,9 @@
 # Output files from R CMD check
 /*.Rcheck/
 
+# R data files from past sessions
+.Rdata
+
 # RStudio files
 .Rproj.user/
 
@@ -21,13 +28,61 @@
 vignettes/*.html
 vignettes/*.pdf
 
+# =========================
+# Operating System Files
+# =========================
+
+# OSX
+# =========================
+
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Thumbnails
+._*
+
+# Files that might appear on external disk
+.Spotlight-V100
+.Trashes
+
+# Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Windows
+# =========================
+
+# Windows image file caches
+Thumbs.db
+ehthumbs.db
+
+# Folder config file
+Desktop.ini
+
 # OAuth2 token, see https://github.com/hadley/httr/releases/tag/v0.3
 .httr-oauth
+
+# Recycle Bin used on file shares
+$RECYCLE.BIN/
 
 # knitr and R markdown default cache directories
 /*_cache/
 /cache/
 
+# Windows Installer files
+*.cab
+*.msi
+*.msm
+*.msp
+
 # Temporary files created by R markdown
 *.utf8.md
 *.knit.md
+
+# Windows shortcuts
+*.lnk
+*.nb.html
