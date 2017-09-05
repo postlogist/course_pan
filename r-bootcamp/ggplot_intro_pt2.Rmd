@@ -1,7 +1,10 @@
 ---
 title: "An introduction to data visualization using ggplot2, part 2"
-output: html_document
-date: 2016-09-13
+date: 2017-09-05
+output: 
+  html_document: 
+    toc: true
+    toc_float: true
 ---
 
 # Introduction
@@ -10,9 +13,9 @@ This file introduces basic concepts of plotting using the ggplot2 package, which
 
 Code chunks below can be executed by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Ctrl+Shift+Enter*. 
 
-```{r Load Libraries}
-library(ggplot2)
-suppressMessages(library(dplyr))
+```{r Load Libraries, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(scales) # percent axis label format
 ```
 
 You will continiue to work with two built-in datasets - `mpg` and `diamonds`.
@@ -60,7 +63,7 @@ ggplot(data = mpg, mapping = aes(x = displ, y = hwy)) +
   geom_smooth(se = FALSE)
 ```
 
-Not only mappings, but also data can be overriden in a geom function for a particular layer. Let's highlight the cars manufactured by Dodge, for example:
+Not only mappings, but also the data can be overriden in a geom function for a particular layer. Let's highlight the cars manufactured by Dodge, for example:
 
 ```{r Example for overriding data in a specific layer}
 ggplot(data = mpg, mapping = aes(x = displ, y = hwy)) + 
@@ -148,7 +151,7 @@ Package ggplot2 provides many stats for you to use. A cheat sheet with avialiabl
 
 Each stat is available as a function which provides a convenient way to access a stat's help page (e.g. `?stat_function`). Since each stat function is associated with a default geom, you can add them directly as layers for your plot.
 
-Let's plot two functions in the range of (-1, 1):
+Let's plot two functions within the range of $(-\pi, \pi)$:
 
 
 ```{r Plotting arbitrary funcitons}
@@ -175,7 +178,11 @@ ggplot(data = mpg, mapping = aes(x = cty)) +
 
 Plot a histogram of diamond prices based on the `diamonds` dataset. Try to recreate the plot:
 
+
 ![Histogram of diamond prices](pics/diamond_prices.png)
+
+**Note**: shift-click the link to open the larger picture in the associated program. If the link doesn't work, try setting the working directory in Rstudio: `Session/Set Working Directory/To Source File Location`.
+
 
 A list of color names available in R can be found [here](http://research.stowers-institute.org/efg/R/Color/Chart/ColorChart.pdf)
 
@@ -194,6 +201,17 @@ The vertical reference line is positioned at the average price. See `?geom_vline
 ```{r Code for exercise on distribution of diamond prices}
 # Your code here
 
+# Compute parameters for the exponential distribution
+params <- list(rate = ____ )
+
+# Plot data and the density function
+ggplot(data = ___, 
+       mapping = ___) +
+  _______(mapping = aes(y = _____ ), bins = _____) +
+  stat_function(fun = _____, args = params, 
+                color = 'red', size = 1.5) + 
+  ______ +
+  ______
 
 ```
 
@@ -321,6 +339,8 @@ Compare distribution of diamond prices for each clarity class. Try to recreate t
 
 ![Histogram of diamond prices](pics/diamond_boxplot.png)
 
+**Note**: shift-click the link to open the larger picture in the associated program. If the link doesn't work, try setting the working directory in Rstudio: `Session/Set Working Directory/To Source File Location`.
+
 The dashed line is the median price for all diamonds. Note the range for the `price` axis.
 
 ```{r Exercise - boxplots for diamond prices}
@@ -343,7 +363,7 @@ ggplot(data = <DATA>) +
   <FACET_FUCTION>
 ```
 
-There are sensible defaults, so you rarely need to include all parts and can usually proceed just with the bare minimum of a dataset, a geom and a set of mappings.
+There are sensible defaults, so you rarely need to include all the parts and can usually proceed just with the bare minimum of a dataset, a geom and a set of mappings.
 
 To review how grammar of graphics works, consider how a basic plot is constructed starting with a dataset.
 
