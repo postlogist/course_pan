@@ -1,0 +1,99 @@
+---
+title: "Plotting Functions"
+author: "Заходякин Г.В., postlogist@gmail.com"
+date: '6 сентября 2017 г '
+output: html_document
+---
+
+```{r Load Libraries, message=FALSE, warning=FALSE}
+library(tidyverse)
+```
+
+# Plotting functions
+
+Each stat in ggplot2 is associated with a default geom. As a result, you can add stats directly as layers to your plot.
+
+In this example we'll show how to plot an an arbitraty function using the stat_function()
+
+Let's plot two functions within the range of $(-\pi, \pi)$:
+
+
+```{r Plotting arbitrary funcitons}
+ggplot(data = tibble(x = c(-pi, pi)), mapping = aes(x)) +
+  stat_function(fun = sin, 
+                aes(color = 'sin(x)')) +
+  stat_function(fun = function(x) { 0.2 * (x + 1)^2 - 1}, 
+                aes(color = 'parabola')) +
+  labs(color = "Function name")
+```
+
+**Note** we used a trick here: notice mapping the color aesthetic to function names. These names are shown in the plot legend. So we can see, which line corresponds to which functions.
+
+
+# Overlaying probability distributions
+
+You can overlay functions on top of data. Let's put this to use. We'll overlay a normal density function on top of city mileage histogram to check if it fits the data. 
+
+
+R has a built-in `dnorm()` function, which calculates the normal probability density function for a given point. The parameters for `dnorm()` are the mean and the standard deviation.
+
+```{r Overlaying probability density funciton}
+# Compute parameters for the normal distribution and store them in a list
+params <- list(mean = mean(mpg$cty), 
+               sd = sd(mpg$cty))
+
+
+# Plot data and the density function
+ggplot(data = mpg, mapping = aes(x = cty)) +
+  geom_histogram(mapping = aes(y = ..density..), bins = 10) +
+  stat_function(fun = dnorm, args = params, xlim = c(0, 40), 
+                color = 'red', size = 1.5)
+
+
+```
+
+** Note: ** you can find the available probability distributions by running the `?distributions` command.
+
+## Exercise - plotting distribution of diamond prices
+
+Plot a histogram of diamond prices based on the `diamonds` dataset. Try to recreate the following plot:
+
+
+![Histogram of diamond prices](pics/diamond_prices.png)
+
+
+**Note**: shift-click the link to open the larger picture in the associated program. If the link doesn't work, try setting the working directory in Rstudio: `Session/Set Working Directory/To Source File Location`.
+
+**Tips** 
+
+ - A list of color names available in R can be found [here](http://research.stowers-institute.org/efg/R/Color/Chart/ColorChart.pdf)
+
+ - The density function for this distribution is the exponential density function: 
+ 
+ 
+ $$ f(x) = \lambda e^{-\lambda x}, $$
+ where $\lambda$ is the *rate* parameter. You can estimate the rate from data using the formula:
+$$ \lambda = 1 / \bar{x} $$
+
+
+You can define your own function with two arguments: x and rate, or use the built-in exponential density function - `dexp()`. See `?dexp`.
+
+The vertical reference line is placed at the average price. See `?geom_vline` for help on how to add it.
+
+
+```{r Code for exercise on distribution of diamond prices}
+# Your code here
+
+# Compute parameters for the exponential distribution
+params <- list(rate = ____ )
+
+# Plot data and the density function
+ggplot(data = ___, 
+       mapping = ___) +
+  _______(mapping = aes(y = _____ ), bins = _____) +
+  stat_function(fun = _____, args = params, 
+                color = 'red', size = 1.5) + 
+  ______ +
+  ______
+
+```
