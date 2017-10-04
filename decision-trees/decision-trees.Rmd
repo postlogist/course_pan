@@ -1,0 +1,576 @@
+---
+title: "Классификация с помощью дерева решений"
+author: "Заходякин Г.В."
+date: '19 апреля 2017 г '
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+options(digits = 2)
+```
+
+# Подготовка
+
+## Загрузка пакетов
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse) # Трансформация и визуализация данных 
+library(scales) # Процентный формат для осей ggplot
+library(rpart) # Деревья в R: recursive partitioning
+library(C50) # Деревья в R: C5.0
+library(party) # Деревья в R: conditional inference
+library(rpart.plot) # Визуализация деревьев
+library(partykit) # Визуализация деревьев
+#library(rattle) 
+library(mlr) # Фреймворк для машинного обучения, здесь используется для подсчета показателей ошибки
+
+```
+
+## Подготовка данных
+
+```{r Загрузка данных, разделение на обучающий и тестовый набор}
+d <- readRDS("turnover.RDS")
+
+# Обучающая и тестовая выборка
+set.seed(1234)
+train_indices <-  sample(1:nrow(d), size = 2000)
+d_train <- d[train_indices, ]
+d_test <- d[-train_indices, ]
+
+# Что получилось
+glimpse(d_train)
+```
+
+# Моделирование с использованием алгоритма CART
+
+## Два количественных предиктора (rpart)
+
+```{r График оттока в зависимости от удовлетворения и оценки}
+
+cmap <- c("stayed" = "green", "left" = "red")
+
+ggplot(d, aes(x = satisfaction_level, y = last_evaluation)) +
+  geom_jitter(aes(colour = left), alpha = 0.5) +
+  labs(title = "Employee's decision to quit, job satisfaction and performance", colour = "Decision") +
+  scale_x_continuous(breaks = 1:10) +
+  scale_colour_manual(values = cmap)
+```
+
+
+```{r Дерево решений для удовлетворения и оценки}
+m_rpart2 <- rpart(left ~ satisfaction_level + last_evaluation,
+                 data = d_train)
+rpart.plot(m_rpart2, tweak = 1.5,
+           main = "Дерево с двумя предикторами, rpart")
+```
+
+```{r Текстовое представление дерева}
+print(m_rpart2)
+```
+
+
+### Визуализация разделяющей поверхности
+Т.к. в модели только два количественных предиктора, можно нарисовать разделяющую классы поверхность.
+
+```{r Сетка данных для рисования разделяющей поверхности}
+
+# Сетка значений от 0 до 10 с шагом 0.1
+gr <- expand.grid(satisfaction_level = seq(0, 10, by = 0.1),
+             last_evaluation = seq(3, 10, by = 0.1))
+```
+
+
+```{r Прогноз вероятности ухода и метки класса для каждой точки сетки }
+
+# Добавляем прогноз класса и вероятность ухода
+boundary_rpart2 <- gr %>%
+  mutate(prob = predict(m_rpart2, newdata = gr, type = "prob")[,'left'],
+         class = predict(m_rpart2, newdata = gr, type = "class"))
+
+```
+
+
+```{r Разделяющая поверхность для 2 непрывных предикторов и rpart - вероятности}
+ggplot(boundary_rpart2, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = prob)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_colour_manual(values = cmap) +
+  scale_fill_gradient(low = "grey80", high = "grey20")
+
+```
+
+```{r Разделяющая поверхность для 2 непрывных предикторов и rpart - классы }
+ggplot(boundary_rpart2, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = class)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_fill_grey(start = 0.8, end = 0.2) +
+  scale_colour_manual(values = cmap)
+```
+
+
+### Сравнение критериев разбиения
+
+```{r Построение дерева с помощью индекса Джини}
+m_rpart2_gini <- rpart(left ~ satisfaction_level + last_evaluation , 
+                         data = d_train, 
+                         parms = list(split = "gini"))
+rpart.plot(m_rpart2_gini, tweak = 1.25,
+           main = "Дерево с использованием индекса Джини")
+```
+
+```{r Построение дерева с помощью энтропии}
+m_rpart2_information <- rpart(left ~ satisfaction_level + last_evaluation, 
+                         data = d_train, 
+                         parms = list(split = "information"))
+rpart.plot(m_rpart2_information, tweak = 1.25)
+```
+
+### Оценка точности модели
+
+**Матрица классификации** (**Confusion Matrix**) - кросс-таблица предсказанных и фактических классов.
+
+
+Рассчитаем прогноз класса для обучающего и тестового наборов и построим матрицу классификации.
+
+```{r Матрица классификации для rpart с двумя предикторами}
+
+# Предсказанные метки класса
+pr_rpart2_train <- predict(m_rpart2, newdata = d_train, type = "class")
+
+# Кросс-таблица - матрица классификации
+table_rpart2_train <- table(predicted = pr_rpart2_train, actual = d_train$left)
+table_rpart2_train
+```
+
+Показатели ошибки вручную
+
+```{r Расчет точности вручную}
+options(digits = 3)
+# Точность (Accuracy)
+100 * (table_rpart2_train["stayed", "stayed"] + 
+         table_rpart2_train["left", "left"]) / sum(table_rpart2_train)
+
+```
+
+```{r Расчет средней ошибки вручную}
+# Ошибка классификации (Mean Misclassification Error)
+100 * (table_rpart2_train["stayed", "left"] + 
+         table_rpart2_train["left", "stayed"]) / sum(table_rpart2_train)
+
+```
+
+
+Эти показатели можно рассчитать на основе векторов фактических и предсказанных меток с помощью функций пакета `mlr`:
+
+```{r Расчет точности для rpart2 на обучающей выборке - accuracy}
+# Accuracy
+measureACC(pr_rpart2_train, d_train$left) * 100
+```
+
+```{r Расчет точности для rpart2 на обучающей выборке - MMCE}
+# Mean misclassification error
+measureMMCE(pr_rpart2_train, d_train$left) * 100
+```
+
+Сравним точность классификации на тестовой выборке
+
+```{r Расчет точности классификации на тестовой выборке - accuracy}
+
+pr_rpart2_test <- predict(m_rpart2, newdata = d_test, type = "class")
+measureACC(pr_rpart2_test, d_test$left) * 100
+
+```
+
+```{r}
+table(predicted = pr_rpart2_test, actual = d_test$left)
+```
+
+
+## Параметры алгоритма построения дерева и эффект переобучения
+
+Деревья решений склонны к чрезмерному усложнению в погоне за чистотой листьев. Это затрудняет интерпретацию дерева и увеличивает риск переобучения. Переобученная модель "настраивается" не столько на закономерности в обучающей выборке, сколько на случайный шум, присутствующий в ней. Такая модель демонстрирует высокую точность на обучайщей выборке, но плохо прогнозирует на новых данных.
+
+Попробуем усложнить модель, задав более мягкие критерии остановки алгоритма и упрощения дерева.
+
+```{r Пробуем переобучить модель, dev="svg"}
+
+m_rpart2_overfit <- rpart(left ~ satisfaction_level + last_evaluation, 
+                          data = d_train,
+                          control = 
+                            rpart.control(
+                              minsplit = 2, # минимальное число примеров для разбиения
+                              cp = 0.00001, # минимальное относительное улучшение для разбиения
+                              maxdepth = 20 # максимальная глубина для листа
+                            ))
+
+rpart.plot(m_rpart2_overfit)
+
+```
+
+
+### Визуализация разделяющей поверхности для переобученной модели
+
+```{r Разделяющая поверхность для переобученной модели }
+
+# Добавляем прогноз класса и вероятность ухода
+boundary_rpart2_overfit <- gr %>%
+  mutate(prob = predict(m_rpart2_overfit, newdata = gr, type = "prob")[,'left'],
+         class = predict(m_rpart2_overfit, newdata = gr, type = "class"))
+
+# График разделяющей поверхности
+ggplot(boundary_rpart2_overfit, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = prob)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_colour_manual(values = cmap) +
+  scale_fill_gradient(low = "grey80", high = "grey20")
+
+```
+
+### Сравнение показателей переобученной модели на обучающей и тестовой выборках
+
+```{r Прогноз по переобученной модели}
+
+pr_rpart2_overfit_train <- predict(m_rpart2_overfit, newdata = d_train, type = "class")
+pr_rpart2_overfit_test <- predict(m_rpart2_overfit, newdata = d_test, type = "class")
+
+```
+
+
+Матрица классификации и точность на обучающей выборке для переобученной модели
+
+```{r}
+table(predicted = pr_rpart2_overfit_train, actual = d_train$left)
+
+```
+
+```{r}
+measureACC(pr_rpart2_overfit_train, d_train$left) * 100
+
+```
+
+Матрица классификации и точность на тестовой выборке для переобученной модели
+
+```{r}
+table(predicted = pr_rpart2_overfit_test, actual = d_test$left)
+```
+
+```{r}
+measureACC(pr_rpart2_overfit_test, d_test$left) * 100
+
+```
+
+## Упрощение дерева (pruning)
+Сравнение ошибок в зависимости от параметра сложности (cp)
+
+```{r}
+
+plotcp(m_rpart2_overfit)
+```
+
+Упрощение дерева
+
+```{r}
+
+m_rpart2_pruned <- prune(m_rpart2_overfit, cp = 0.002)
+rpart.plot(m_rpart2_pruned)
+```
+
+### Точность модели после упрощения
+
+```{r Прогноз по упрощенной модели}
+
+pr_rpart2_pruned_train <- predict(m_rpart2_pruned, newdata = d_train, type = "class")
+pr_rpart2_pruned_test <- predict(m_rpart2_pruned, newdata = d_test, type = "class")
+
+```
+
+
+Матрица классификации и точность на обучающей выборке для упрощенной модели
+
+```{r}
+table(predicted = pr_rpart2_pruned_train, actual = d_train$left)
+
+```
+
+```{r}
+measureACC(pr_rpart2_pruned_train, d_train$left) * 100
+
+```
+
+Матрица классификации и точность на тестовой выборке для упрощенной модели
+
+```{r}
+table(predicted = pr_rpart2_pruned_test, actual = d_test$left)
+```
+
+```{r}
+measureACC(pr_rpart2_pruned_test, d_test$left) * 100
+
+```
+
+### Визуализация разделяющей поверхности для модели после упрощения
+```{r Разделяющая поверхность для после упрощения }
+
+# Добавляем прогноз класса и вероятность ухода
+boundary_rpart2_pruned <- gr %>%
+  mutate(prob = predict(m_rpart2_pruned, newdata = gr, type = "prob")[,'left'],
+         class = predict(m_rpart2_pruned, newdata = gr, type = "class"))
+
+# График разделяющей поверхности
+ggplot(boundary_rpart2_pruned, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = prob)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_colour_manual(values = cmap) +
+  scale_fill_gradient(low = "grey80", high = "grey20")
+
+```
+
+
+# Моделирование с использованием conditional inference tree (party)
+
+Еще один алгоритм классификации, основанный на деревьях решений - conditional inference tree, реализованный в пакете `party`.
+
+```{r Построение ctree для двух предикторов}
+m_ctree2 <- ctree(left ~ satisfaction_level + last_evaluation, data = d_train)
+plot(m_ctree2)
+
+```
+
+## Визуализация разделяющей поверхности для модели ctree
+```{r Разделяющая поверхность для ctree }
+
+# Добавляем прогноз класса и вероятность ухода
+boundary_ctree2 <- gr %>%
+  mutate(prob = predict(m_ctree2, newdata = gr, type = "prob")[,'left'],
+         class = predict(m_ctree2, newdata = gr, type = "response"))
+
+# График разделяющей поверхности
+ggplot(boundary_ctree2, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = prob)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_colour_manual(values = cmap) +
+  scale_fill_gradient(low = "grey80", high = "grey20")
+
+```
+
+## Точность модели ctree
+
+```{r Прогноз по модели ctree}
+pr_ctree2_test <- predict(m_ctree2, newdata = d_test, type = "response")
+```
+
+Матрица классификации и точность на тестовой выборке для модели ctree
+
+```{r}
+table(predicted = pr_ctree2_test, actual = d_test$left)
+```
+
+```{r}
+measureACC(pr_ctree2_test, d_test$left) * 100
+
+```
+
+
+# Моделирование с использованием C5.0
+
+Одним из наиболее популярных алгоритмов деревьев является C5.0 (Ross Quinlan). Этот алгоритм используется в коммерческих пакетах анализа данных и сравнительно недавно был опубликован автором под открытой лицензией и реализован в R.
+
+```{r Построение c50 для двух предикторов}
+m_c50 <- C5.0(left ~ satisfaction_level + last_evaluation, data = d_train)
+plot(m_c50)
+
+```
+
+## Визуализация разделяющей поверхности для модели C5.0
+```{r Разделяющая поверхность для c50 }
+
+# Добавляем прогноз класса и вероятность ухода
+boundary_c50 <- gr %>%
+  mutate(prob = predict(m_c50, newdata = gr, type = "prob")[,'left'],
+         class = predict(m_c50, newdata = gr, type = "class"))
+
+# График разделяющей поверхности
+ggplot(boundary_c50, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = prob)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_colour_manual(values = cmap) +
+  scale_fill_gradient(low = "grey80", high = "grey20")
+
+```
+
+## Точность модели C5.0
+
+```{r Прогноз по модели c50}
+pr_c50_test <- predict(m_c50, newdata = d_test, type = "class")
+```
+
+Матрица классификации и точность на тестовой выборке для модели C5.0
+
+```{r}
+table(predicted = pr_c50_test, actual = d_test$left)
+```
+
+```{r}
+measureACC(pr_c50_test, d_test$left) * 100
+
+```
+
+## Увеличение точности с помощью бустинга
+
+Точность прогнозов можно повысить за счет комбинирования предсказаний нескольких моделей. В пакете C5.0 используется один из них - алгоритм адаптивного бустинга (adaptive boosting), который последовательно строит дополнительные деревья, обученные для распознавания ошибок предыдущих моделей. Затем полученный ансамбль моделей применяется для прогнозирования. Класс при прогнозировании определяется методом "голосования".
+
+Количество дополнительных деревьев определяется параметром `trials`, который задает максимальное их число. Алгоритм может остановиться раньше, если окажется, что дополнительные модели не улучшают точность.
+
+```{r}
+m_c50_boost <- C5.0(left ~ satisfaction_level + last_evaluation, 
+                    data = d_train, trials = 5)
+m_c50_boost
+```
+
+## Визуализация разделяющей поверхности для модели C5.0 с бустингом
+```{r Разделяющая поверхность для c50 с бустингом }
+
+# Добавляем прогноз класса и вероятность ухода
+boundary_c50_boost <- gr %>%
+  mutate(prob = predict(m_c50_boost, newdata = gr, type = "prob")[,'left'],
+         class = predict(m_c50_boost, newdata = gr, type = "class"))
+
+# График разделяющей поверхности
+ggplot(boundary_c50_boost, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = prob)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_colour_manual(values = cmap) +
+  scale_fill_gradient(low = "grey80", high = "grey20")
+
+```
+
+
+## Точность модели C5.0 с бустингом
+
+```{r Прогноз по модели c50 с бустингом}
+pr_c50_boost_test <- predict(m_c50_boost, newdata = d_test, type = "class")
+
+```
+
+Матрица классификации и точность на тестовой выборке для модели C5.0 с бустингом
+
+```{r}
+table(predicted = pr_c50_boost_test, actual = d_test$left)
+```
+
+```{r}
+measureACC(pr_c50_boost_test, d_test$left) * 100
+```
+
+В данном случае точность даже ухудшилась по сравнению с базовой моделью.
+
+
+## Классификация с учетом цены ошибки
+
+Во многих случаях ошибки классификатора не равнозначны. Например, если модель для выявления мошенничества при финансовых операциях "упустит" злонамеренную транзакцию, то цена ошибки будет намного выше, чем стоимость дополнительной проверки, если произойдет "ложная тревога". 
+Аналогично, при поиске клиентов, которые могут откликнуться на предложение товара или услуги - "упустить" потенциального клиента гораздо дороже, чем сделать лишний звонок. Поэтому некоторые алгоритмы построения деревьев могут учитывать различную стоимость ошибок.
+
+Пусть, например, компании в нашем примере важнее всего выявить сколнных к уходу сотрудников, чтобы принять меры для предотвращения. Уходят часто ценные кадры, а подготовка замены им - дорогостоящее и долгое дело.
+
+Для этого необходимо создать матрицу затрат.
+
+```{r Создание матрицы затрат}
+
+cost_matrix <- matrix(c(0, 5, 1, 0 ), ncol = 2, byrow = TRUE,
+                      dimnames = list("predicted" = c("stayed", "left"),
+                                      "actual" = c("stayed", "left")))
+cost_matrix
+```
+
+Построение классификатора с учетом затрат
+
+```{r}
+m_c50_cost <- C5.0(left ~ satisfaction_level + last_evaluation, 
+                   data = d_train, cost = cost_matrix)
+plot(m_c50_cost)
+
+```
+
+## Визуализация разделяющей поверхности для модели C5.0 с учетом затрат
+```{r Разделяющая поверхность для c50 с учетом затрат }
+
+# Добавляем прогноз класса и вероятность ухода
+boundary_c50_cost <- gr %>%
+  mutate(class = predict(m_c50_cost, newdata = gr, type = "class"))
+
+# График разделяющей поверхности
+ggplot(boundary_c50_cost, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = class)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_colour_manual(values = cmap) +
+  scale_fill_manual(values = c("grey80","grey20"))
+```
+
+
+## Точность модели C5.0 с затратами
+
+```{r Прогноз по модели c50 с затратами}
+pr_c50_cost_test <- predict(m_c50_cost, newdata = d_test, type = "class")
+
+```
+
+Матрица классификации и точность на тестовой выборке для модели C5.0 с затратами
+
+```{r}
+table(predicted = pr_c50_cost_test, actual = d_test$left)
+```
+
+```{r}
+measureACC(pr_c50_cost_test, d_test$left) * 100
+```
+
+# Альтернативный способ визуализации деревьев rpart
+Для небольших деревьев визуализация, которую использует пакет party для деревьев ctree является более наглядной.
+
+Деревья, которые строит rpart, также можно визуализировать этим способом. Для этого можно использовать функцию partykit::as.party()
+
+```{r}
+rpart.plot(m_rpart2, main = "Стандартная визуализация rpart")
+```
+
+```{r}
+plot(as.party(m_rpart2), main = "Визуализация party")
+```
+
+
+# Задания
+
+1. Проведите разведочный анализ данных с целью выявления факторов, влияющих на отток сотрудников
+
+2. Постройте на обучающей выборке модели с использованием различных методов (rpart, ctree, C5.0) с использованием всех переменных. Подтверждает ли модель ваши предположения?
+
+3. Если вы видите, что модель не учитывает важные зависимости, выявленные визуально - попробуйте включить их принудительно. Как изменится точность модели на тестовой выборке?
+
+4. Предположим, что компания не проводит исследование степени удовлетворенности сотрудников работой. Сколько будет "стоить" потеря этой информации с точки зрения точности моделей предсказания оттока сотрудников?
+
+
