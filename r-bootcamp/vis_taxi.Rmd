@@ -1,0 +1,435 @@
+---
+title: "Визуализация данных о поездках такси в Нью-Йорке"
+author: Морозова Ю.А., Баркова З.А.
+date: 2017-09-29
+output: 
+  html_document: 
+    toc: true
+    toc_float: true
+---
+
+# Описание набора данных 
+
+Набор данных для этого примера был опубликован организацией NYC Taxi and Limousine Commission (TLC) и включает записи о всех поездках двух провайдеров - Желтого и Зеленого такси за период с января по июнь 2016 года. Этот набор данных использовался для предсказания длительности поездки пассажиров и включает следующие переменные:
+
+  - X - номер каждой поездки;
+
+  - id - идентификатор каждой поездки;
+  
+  - vendor_id - код провайдера услуг такси;
+  
+  - pickup_datetime - дата и время посадки пассажиров;
+  
+  - dropoff_datetime - дата и время высадки пассажиров;
+  
+  - passenger_count - количество пассажиров;
+  
+  - pickup_longitude - долгота места посадки пассажиров;
+  
+  - pickup_latitude - широта места посадки пассажиров;
+  
+  - dropoff_longitude - долгота места высадки пассажиров;
+  
+  - dropoff_latitude - широта места высадки пассажиров;
+  
+  - store_and_fwd_flag - показывает, хранилась ли запись о поездке в памяти транспортного средства до того, как была отправлена провайдеру, так как у автомобиля не было соединения с сервером  - Y = хранилась; N = нет;
+  
+  - trip_duration - длительность поездки в секундах;
+  
+  - Nearest_PickupCity - ближайший город к месту посадки пассажиров;
+  
+  - Nearest_DropoffCity - ближайший город к месту высадки пассажиров.
+  
+# Подготовительная работа 
+## Загрузка данных
+
+```{r Подключение пакетов, warning=FALSE, message=FALSE}
+library(tidyverse)
+library(lubridate)
+library(geosphere)
+library(maps)
+library(stringr)
+```
+
+Загрузим данные из файла `NYtaxi.zip`. Чтобы распаковать архив, в котором содержится файл `NYtaxi.csv`, воспользуемся функцией `unz()`.
+
+```{r Загрузка и чтение файла данных, message=FALSE, warning=FALSE}
+
+data_url <- 'http://rawgit.com/postlogist/big_datasets/master/ny_taxi/NYtaxi.zip'
+
+# Скачиваем данные из репозитория, если файла нет на компьютере
+if (!file.exists('NYtaxi.zip')) {
+  download.file(data_url,
+                destfile = 'NYtaxi.zip',
+                mode = 'wb')
+}
+
+# Извлекаем файл из архива и загружаем в R
+taxi <- unz('NYtaxi.zip', 'NYtaxi.csv') %>%
+  read_csv()
+
+```
+
+Набор данных содержит `r nrow(taxi)` наблюдений о поездках и `r ncol(taxi)` переменных, описанных выше. Выведем краткую обобщающую сводку по набору данных.
+
+```{r Вывод сводки}
+summary(taxi)
+```
+
+## Фильтрация пропущенных значений
+
+Как видно из сводки, в семи переменных присутствует по 3 пропущенных значения. Учитывая большое количество наблюдений, наблюдения с пропущенными значениями можно удалить или при вычислениях использовать выражение `na.rm = TRUE`, убирающее пропущенные значения перед вычислениями. В данном случае отфильтруем пропущенные значения:
+
+```{r Фильтрация пустых значений}
+taxi <- filter(taxi, complete.cases(taxi))
+```
+
+## Преобразование дат и времени
+В данных есть две колонки с датой и временем. Приведем их к типу `Date` с форматом "год-месяц-число часы:минуты:секунды" с помощью функции `ymd_hms()`:
+
+```{r Преобразование дат и времени}
+taxi <- mutate(taxi, pickup_datetime = ymd_hms(pickup_datetime), 
+               dropoff_datetime = ymd_hms(dropoff_datetime))
+```
+
+После приведения даты и времени к нужному формату, с ними легко делать вычисления. Например, вычитая из времени высадки время посадки, мы получим длительность поездки. Сравним рассчитанную длительность с данной в наборе, чтобы убедиться в том, что в данных нет ошибок:
+
+```{r Количество несовпадений расчетной и фактической длительности поездки}
+sum(!near(taxi$dropoff_datetime-taxi$pickup_datetime, taxi$trip_duration)) #считаем количество несовпадающих значений в двух векторах
+```
+
+Несовпадений в расчетной и фактической длительности поездок нет.
+
+## Обработка выбросов
+
+В сводке можно заметить, что в столбце `trip_duration` максимальная длительность поездки `r max(taxi$trip_duration)` секунд - аномально высока. 
+Посмотрим на ящичной диаграмме, есть ли еще выбросы. До этого переведем длительность поездки в минуты, чтобы было удобнее анализировать.
+
+```{r Перевод длительности поездки в минуты}
+taxi <- mutate(taxi, trip_duration = trip_duration/60)
+```
+
+```{r Ящичная диаграмма длительности поездок}
+ggplot(taxi) + 
+  geom_boxplot(aes(x='', y=trip_duration)) +
+  labs(title='Распределение длительности поездок на такси',
+       x = '',
+       y = 'Длительность поездки, минут') +
+  coord_flip()
+```
+
+Аномальные значения длительности поездки настолько велики, что на диаграмме невозможно разглядеть "усы" ящичной диаграммы. Посмотрим внимательнее на самые большие значения длительности поездок:
+
+```{r}
+taxi %>%
+  arrange(desc(trip_duration)) %>%
+  head()
+```
+
+Самые длинные поездки длились десятки тысяч минут. Хотя переменная `store_and_fwd_flag` свидетельствует о том, что данные при сборе передавались сразу на сервер, в данных должно быть была ошибка при вводе, так как расстояние между Inwood и Long Island составляет всего 12,2 мили.
+
+Перерисуем диаграмму, ограничив в координатной системе значения по оси `y` 99-процентным квантилем.
+
+```{r Ящичная диаграмма длительности поездок с ограничением значений}
+ggplot(taxi) + 
+  geom_boxplot(aes(x='', y=trip_duration), fill="lightblue") +
+  labs(title='Распределение длительности поездок на такси (99% значений)',
+       x = '',
+       y = 'Длительность поездки, минут') +
+  coord_flip(ylim = c(0, quantile(taxi$trip_duration, probs = 0.99)))
+```
+
+По диаграмме можно видеть, что 99% поездок на такси длились не более `r quantile(taxi$trip_duration, probs = 0.99)` мин. Отфильтруем поездки с длительностью более 60 минут:
+
+```{r Фильтрация поездок длительностью более 60 минут}
+taxi_cleaned <- filter(taxi, trip_duration<=60)
+```
+
+# Визуализация
+## Распределения длительности поездок в зависимости от провайдера услуг
+
+Построим гистограммы распределения длительности поездок в зависимости от провайдера услуг.
+
+```{r Гистограммы распределения длительности поездок в зависимости от провайдера услуг}
+ggplot(taxi_cleaned) +
+  geom_histogram(aes(trip_duration, fill = factor(vendor_id)), show.legend = FALSE) + # преобразовали vector_id в factor, чтобы переменная обрабатывалась как дискретная, а не непрерывная
+  facet_wrap(~ vendor_id, labeller = labeller(vendor_id = c(
+    '1' = 'Желтое такси', 
+    '2' = 'Зеленое такси'))) +
+  labs(title = 'Распределение длительности поездок',
+       x = 'Длительность поездки, минуты',
+       y = 'Количество поездок') +
+  scale_fill_manual(values = c("yellow2","green2"))  # задание цветов заполнения гистограмм вручную 
+
+```
+
+Можно сказать, что в целом распределения длительности поездок у обеих фирм похожи, однако у Зеленого такси, очевидно, больше количество поездок.
+
+Построим графики плотности распределения для обоих провайдеров и сравним их функцией плотности нормального распределения.
+
+```{r Плотности распределения длительности поездок в зависимости от провайдера услуг}
+lbl <- taxi_cleaned %>%
+  group_by(vendor_id) %>%
+  summarise(x = max(trip_duration),
+            y = dnorm(x = mean(trip_duration),
+                      mean = mean(trip_duration), 
+                      sd = sd(trip_duration)),
+            label = str_c("Среднее ", round(mean(trip_duration),2), 
+                          "\nСтандартное отклонение ", round(sd(trip_duration),2)))
+
+ggplot(taxi_cleaned) +
+  geom_histogram(aes(x = trip_duration, y = ..density.., fill = factor(vendor_id)), show.legend = FALSE) +
+  facet_wrap(~ vendor_id, labeller = labeller(vendor_id = c(
+    '1' = 'Желтое такси', 
+    '2' = 'Зеленое такси'))) +
+  labs(title = 'Плотность распределения длительности поездок',
+       x = 'Длительность поездки, минуты',
+       y = 'Плотность распределения') +
+  scale_fill_manual(values = c("yellow2","green2"))+
+  stat_function(fun = dnorm, args = list(mean(taxi_cleaned$trip_duration),
+                                       sd(taxi_cleaned$trip_duration)),
+              color = "red", size = 1) +
+  geom_label(data = lbl, aes(x=x, y=y, label = label), 
+             hjust = "right", vjust = "bottom", size = 3)
+```
+
+Графики плотности распределения длительности поездки для обеих фирм практически идентичны, оба скошены влево по сравнению с графиком функции плотности нормального распредления. 
+
+##Динамика объемов перевозки пассажиров на такси
+
+Посмотрим, есть ли сезонные особенности в перевозке пассажиров на такси. Для этого вычленим из даты посадки год, месяц и день недели соответственно (функции из библиотеки `lubridate`):
+
+```{r Определение года, месяца и дня недели посадки}
+taxi_cleaned <- mutate(taxi_cleaned, 
+                       pickup_year = year(pickup_datetime),
+                       pickup_month = month(pickup_datetime), 
+                       pickup_weekdays = weekdays(pickup_datetime, abbreviate = TRUE), # использовать сокращенные названия дней недели
+                       pickup_hour = hour(pickup_datetime)) %>%
+  mutate(pickup_monthdate = make_date(pickup_year, pickup_month, 1)) # дата начала месяца
+```
+
+Построим столбиковую диаграмму, где по оси х - дата начала каждого месяца, а по оси у - суммарное количество количество перевезенных пассажиров. Также добавим график темпа роста количества пассажиров, значения которого будут отображатсья на дополнительной (правой) шкале y:
+
+```{r Динамика перевезенных пассажиров по месяцам}
+taxi_cleaned %>%
+  group_by(pickup_monthdate) %>% # группировка по месяцу
+  summarise(pass = sum(passenger_count)) %>% # расчет суммарного количества в каждом месяце
+  mutate(rate = round(pass/lag(pass)*100,2)) %>% # расчет темпа роста
+  ggplot(aes(x=pickup_monthdate)) +
+  geom_bar(aes(y=pass/1000), stat='identity', fill = 'lightblue') +
+  labs(title = 'Динамика количества перевезенных пассажиров по месяцам',
+       x = 'Месяц',
+       y = 'Количество пассажиров, тыс. чел.') +
+  geom_line(aes(y=rate*2), color = 'blue', size = 1.5) + # чтобы линия темпа роста была на графике повыше, умножим на 2 +
+  geom_point(aes(y=rate*2), fill = 'blue', size = 3, shape=24) +
+  # Добавление второй шкалы. Чтобы наименования второй шкалы соответствовали темпу роста, поделим на 2 
+  scale_y_continuous(sec.axis = sec_axis(~./2, name = "Темп роста количества пассажиров, %")) +
+  scale_x_date(date_labels = "%b %y") +
+  ggrepel::geom_label_repel(aes(y=rate*2, label = rate)) # добавление меток
+```
+
+На графике видно, что в январе-марте наблюдался подъем, а в апреле-июне падение. Однако о сезонных колебаниях по месяцам или тренде сказать ничего нельзя, т.к. данные только за 6 месяцев.
+
+Построим график динамики количества перевезенных пассажиров по дням. Пунктиром отмечены 2,5% и 97,5% квантили. Дни, в которые наблюдался аномально высокий или низкий объем пассажиров, выделены красным.
+
+```{r Динамика количества перевезенных пассажиров по дням}
+taxi_by_days <- taxi_cleaned %>%
+  group_by(pickup_date=date(pickup_datetime)) %>%
+  summarise(pass = sum(passenger_count)) # расчет количества пассажиров по дням
+
+pass_q975 <- quantile(taxi_by_days$pass, probs = 0.975) # расчет 97,5-процентного квантиля
+pass_q025 <- quantile(taxi_by_days$pass, probs = 0.025) # расчет 2,5-процентного квантиля
+extreme_pass <- filter(taxi_by_days, pass < pass_q025 | pass > pass_q975) # выборка экстремальных значений
+
+ggplot(taxi_by_days, aes(x=pickup_date, y=pass)) +
+  geom_line(color = "blue", size = 1) +
+  labs(title = 'Динамика количества перевезенных пассажиров по дням',
+     x = 'Дни',
+     y = 'Количество пассажиров, чел.') +
+  scale_x_date(date_labels = "%d %b", date_breaks = '2 weeks') +
+  geom_hline(yintercept = pass_q025, linetype = 'dashed') +
+  geom_hline(yintercept = pass_q975, linetype = 'dashed') +
+  geom_point(data=extreme_pass, aes(x=pickup_date, y=pass), color = 'red', size=2) +
+  ggrepel::geom_label_repel(data=extreme_pass, aes(label = as.character(pickup_date, format = "%d %b")))
+```
+
+
+Судя по периодически повторяющимся всплескам и спадам количества пассажиров, во временном ряде присутствует сезонность по дням недели.
+
+Рассчитаем среднее количество перевозимых пассажиров такси по дням недели и отобразим на столбиковой диаграмме:
+
+```{r Среднее количество пассажиров по дням недели}
+taxi_cleaned %>%
+  group_by(pickup_weekdays, date(pickup_datetime)) %>%
+  summarise(pass = sum(passenger_count)) %>% # суммарное количество пассажиров по дням
+  summarise(pass = mean(pass)) %>% # среднее количество пассажиров по дням недели
+  mutate(work = ifelse(pickup_weekdays %in% c('Вс','Сб'), "Выходной", "Рабочий")) %>%
+  ggplot(aes(x=factor(pickup_weekdays, levels = c('Пн','Вт','Ср','Чт','Пт','Сб','Вс')), # преобразуем в фактор, чтобы вывести правильный порядок дней недели
+                      y=pass, fill = work)) +
+    geom_bar(stat='identity') +
+    labs(title = 'Среднее количество перевезенных пассажиров такси по дням недели',
+     x = 'Дни недели',
+     y = 'Количество пассажиров, чел.',
+     fill = '')
+```
+
+В понедельник - наименьшее количество перевозимых пассажиров, в течение недели оно растет и достигает пика в субботу, а затем снижается.
+
+##Зависимость времени поездки от расстояния
+
+Проверим, наблюдается ли зависимость времени поездки от расстояния. Для этого нам нужен новый признак - расстояние. Расстояние можно посчитать с помощью функции `distHaversine` из библиотеки `geosphere`, которая рассчитывает кратчайшее расстояние между 2-мя точками на карте (по прямой, не по эллипсоиде).
+
+```{r Расчет расстояния}
+taxi_cleaned <- mutate(taxi_cleaned,
+               distance = distHaversine(matrix(c(pickup_longitude, pickup_latitude), ncol = 2),
+                     matrix(c(dropoff_longitude,dropoff_latitude), ncol = 2))/1000)
+```
+
+Выведем график зависимости длительности поездки от расстояния:
+
+```{r Зависимость времени от расстояния}
+ggplot(taxi_cleaned, aes(distance, trip_duration)) +
+  geom_point(color = 'lightskyblue', alpha = 0.1) +
+  geom_smooth(method = 'lm', se = FALSE)+
+  labs(title = 'Зависимость длительности поездки от расстояния',
+     x = 'Расстояние, км',
+     y = 'Длительность, мин')
+```
+
+Из-за выбросов по расстоянию точки сконцентрировались в левом нижнем углу. Посмотрим поближе на нижнюю часть графика. Большинство поездок длилось менее 60 минут, и их расстояние было не более 30 км. 
+
+```{r Зависимость времени от расстояния для коротких поездок}
+ggplot(taxi_cleaned, aes(distance, trip_duration)) +
+  geom_point(color = 'lightskyblue', alpha=0.1) +
+  geom_smooth(method = 'lm', se = FALSE) +
+  labs(title = 'Зависимость длительности поездки от расстояния для коротких поездок',
+     x = 'Расстояние, км',
+     y = 'Длительность, мин') +
+  scale_x_continuous(limits = c(0, 30)) +
+  scale_y_continuous(limits = c(0, 60))
+```
+
+
+На графике видно что-то похожее на линейную зависимость в его нижней части и некоторые точки с довольно продолжительным временем поездки. 
+
+##Зависимость длительности поездки от времени суток
+
+Посмотрим, влияет ли как-то время суток на длительность поездки.
+
+```{r Длительность поездки в разное время суток}
+taxi_by_hour <- taxi_cleaned %>%
+                group_by(pickup_hour) %>%
+                summarise(mean_time = round(mean(trip_duration),1))
+
+ggplot(taxi_by_hour, aes(x=pickup_hour, y=mean_time)) +
+  geom_line(color = 'lightskyblue', size=2) +
+  labs(title = 'Зависимость длительности поездки от времени суток',
+     x = 'Час',
+     y = 'Средняя длительность, мин') +
+  scale_x_continuous(breaks = seq(0,23)) + # устанавливаем деления по оси x
+  ggrepel::geom_label_repel(data=filter(taxi_by_hour, 
+                                        mean_time == max(mean_time) | 
+                                          mean_time == min(mean_time)), 
+                            aes(label = str_c(mean_time, " минут")), 
+                            size=3, color = "blue4") # выводим метки для максимальной и минимальной длительности поездки
+```
+
+Предположение подтвердилось - в середине дня средняя длительность поездок была выше, чем в остальное время.
+
+##Расположение на графике мест посадки пассажиров 
+
+Посмотрим, как выглядят поездки на карте. В качестве координат выберем координаты мест посадки пассажиров, цвет точек будет отражать количество пассажиров. 
+
+```{r Расположение мест посадки пассажиров на карте}
+states_map <- map_data("state") # получаем географические координаты штатов
+
+str(states_map)
+
+states_names <- states_map %>%
+  group_by(region) %>%
+  summarise(long = mean(long), lat = mean(lat)) # рассчитываем координаты, где будет выведено название штата
+
+ggplot(states_map) +
+  geom_polygon(aes(long, lat, group = group), fill="white", color="grey") + #основа карты
+  geom_point(data=taxi_cleaned, 
+             aes(pickup_longitude, pickup_latitude, color=passenger_count), alpha=0.1) + # точки посадки пассажиров на карте 
+coord_quickmap(ylim = c(40,45), xlim = c(-80,-71)) +
+  labs(title = 'Места посадки пассажиров на карте штата',
+     x = '',
+     y = '',
+     color = 'Количество пассажиров') +
+  geom_text(data = states_names, aes(long, lat, label = region), size = 3) # выводим на карту названия штатов
+```
+
+На карту мы вывели изображение штатов, при этом чтобы лучше рассмотреть точки посадки, задали ограничения координатных осей для широты и долготы. В основном, точки собраны в городе, при этом есть несколько точек в соседних городах и несколько, вероятно, ошибочных точек в море (вряд кто-то добирался по морю на такси). Посмотрим на поездки более крупным планом. Выведем на карту (без использования фона) координаты мест посадки пассажиров.
+
+```{r Координаты мест посадки пассажиров}
+ggplot(taxi_cleaned,aes(pickup_longitude, pickup_latitude)) +
+  geom_point(aes(color = passenger_count), size=0.05, alpha = 0.1) +
+  scale_x_continuous(limits=c(-74.15, -73.7004)) +
+  scale_y_continuous(limits=c(40.5774, 40.9176)) +
+  coord_quickmap() +
+  labs(title = 'Места посадки пассажиров в пределах города',
+     x = '',
+     y = '',
+     color = 'Количество пассажиров')
+```
+
+На обычном точечном графике вполне видны наиболее и наименее востребованные участки города для поездок на такси.
+
+Красивая визуализация мест посадки пассажиров представлена [здесь](http://minimaxir.com/2015/11/nyc-ggplot2-howto/).
+
+##Маршруты такси
+
+Выведем на карте 100 самых длинных маршрутов поездки на такси.
+
+```{r 100 самых длинных маршрутов}
+taxi_long <- taxi_cleaned %>%
+  mutate(speed = distance/trip_duration*60) %>% # расчет скорости в км/ч
+  arrange(desc(distance)) %>% # сортировка по убыванию
+  head(100)
+
+ggplot(states_map) +
+  geom_polygon(aes(long, lat, group = group), fill="white", color="grey") + 
+  geom_segment(data = taxi_long, aes(x = pickup_longitude, y = pickup_latitude,
+                              xend = dropoff_longitude, yend = dropoff_latitude,
+                              color = speed), size = 1) +
+  geom_point(data = taxi_long, aes(x = pickup_longitude, 
+                                   y = pickup_latitude), color = "blue", size = 2)+ # места посадки
+  geom_point(data = taxi_long, aes(x = dropoff_longitude, 
+                                   y = dropoff_latitude), color = "green", size = 2)+ # места высадки
+coord_quickmap(ylim = c(40,45), xlim = c(-80,-71)) +
+  labs(title = 'Самые длинные маршруты поездок на такси',
+     x = '',
+     y = '',
+     color = 'Скорость, км/ч') +
+  geom_text(data = states_names, aes(long, lat, label = region), size = 3)
+```
+
+Как можно заключить по графику, самые длинные маршруты были преодолены с космической скоростью, что, видимо, является результатом ошибочных данных. Отфильтруем данные, соответствующие неправдоподобной скорости.
+
+```{r 10 самых длинных маршрутов с учетом скорости}
+taxi_long <- taxi_cleaned %>%
+  mutate(speed = distance/trip_duration*60) %>% # расчет скорости в км/ч
+  filter(speed < 130) %>%
+  arrange(desc(distance)) %>% # сортировка по убыванию
+  head(10)
+
+ggplot(states_map) +
+  geom_polygon(aes(long, lat, group = group), fill="white", color="grey") + 
+  geom_segment(data = taxi_long, aes(x = pickup_longitude, y = pickup_latitude,
+                              xend = dropoff_longitude, yend = dropoff_latitude,
+                              color = speed), size = 1) + # соединяем точки посадки и высадки прямой линией
+  geom_point(data = taxi_long, aes(x = pickup_longitude, 
+                                   y = pickup_latitude), color = "blue", size = 2)+ # места посадки
+  geom_point(data = taxi_long, aes(x = dropoff_longitude, 
+                                   y = dropoff_latitude), color = "green", size = 2)+ # места высадки
+coord_quickmap(ylim = c(40.5,41.5), xlim = c(-75,-73)) +
+  labs(title = '10 самых длинных маршрутов поездок на такси',
+     x = '',
+     y = '',
+     color = 'Скорость, км/ч') +
+  ggrepel::geom_label_repel(data = taxi_long, aes(x = dropoff_longitude, 
+                                  y = dropoff_latitude, 
+                                  label = Nearest_DropoffCity), size = 3) # метки городов высадки
+```
