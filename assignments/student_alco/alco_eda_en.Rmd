@@ -68,23 +68,26 @@ Build data visualizations to answer study questions listed below using ggplot2. 
 
 # Instructions on how to submit your solution
 
-1. Download this Rmarkdown file to your computer. Note, that it requires a data file - `students-mat.xlsx` to reside in the same folder.
+1. Download this Rmarkdown file to your computer. Note, that it requires a data file - `students-mat.xlsx` to reside in the same folder as this .Rmd file.
 
 2. Put your plotting code in a code chunk below each question. Write a short interpretation of your findings in text just after the output of the code chunk.
 
-3. When finished all questions, run all chunks (`Run/Run All` or `Ctrl-Alt-R`). Then press `Preview` button on the toolbar in RStudio. This should create a `alco_eda.nb.html` file in the same folder as `alco_eda.Rmd` (this file).
+3. When finished all questions, remove all sections of the document not relevant to your analysis (like 'Task', 'Instructions on how to submit...')
 
-4. Send me the resulting `alco_eda.nb.html` file. 
+4. Create a HTML report by pressking `Knit` button in RStudio. If your document has errors, this process will fail. You can review the errors using the `R Markdown` tab in the lower left part of RStudio window. If you can't see it, try to expand the section of RStudio labelled `Console` (see the lower left part).
+
+5. Send me the resulting html document.
 
 Remember to put your name(s) in the `author:` field on top of this document.
 
 
 # Analysis
 
-Put your code to load libraries and the data in the following code chunk. You'll need the `tidyverse` and the `scales` packages for this assignment. Use `read_excel()` to read-in the data file.
+Put your code to load libraries and the data in the following code chunk. You'll need the `tidyverse` and the `scales` packages for this assignment. I've added the readxl package which is required to read in the Excel file containing the dataset. Use `read_excel()` to read-in the data file. 
 
 ```{r Load libraries}
 # Your code here
+library(readxl)
 
 ```
 
