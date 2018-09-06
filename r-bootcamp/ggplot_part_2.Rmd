@@ -154,7 +154,6 @@ Write code to recreate the following plot:
 **Tip** you can enlarge the picture by **Shift-clicking** its link. If RStudio complains about a missing file - select `Session/Set Working Directory/To Source File Location` command in the menu. This will set the current directory to the one which contains the source file.
 
 
-
 ```{r Exercise on adding trends for subgroups}
 # Uncomment and complete the following code
 
@@ -537,7 +536,8 @@ ggplot(data = mpg,
                              .desc = TRUE), 
              y = hwy)) +
   
-  stat_summary(fun.y = 'mean', geom = 'bar')
+  stat_summary(fun.y = 'mean', geom = 'bar') +
+  labs(x = 'class')
   
 ```
 
