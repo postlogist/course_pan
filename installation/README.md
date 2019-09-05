@@ -22,7 +22,7 @@ You can also try Revolution R Open (see https://mran.revolutionanalytics.com/dow
 While installing R, it is not recommended to enable *localized message translations*. Otherwise you'll need to fix R configuration file to switch software output back to english.  If this is the case, open the file:
 `<path-to-R-installation>\etc\Rconsole` in a plain text editor (e.g. notepad) and specify: `language=en` in `## Language for messages` section at the end of that file.
 
-After installation, start RStudio, open the [install_packages.R](install_packages.R) file and press the **Source** button on RStudio toolbar. Fast Internet connection is required to download packages. Instead of installing everything at once, you can also install packages later as needed for running examples or your own scripts.
+After installation, start RStudio, open the [install_packages_full.R](install_packages_full.R) file and press the **Source** button on RStudio toolbar. Fast Internet connection is required to download packages. Instead of installing everything at once, you can also install packages later as needed for running examples or your own scripts.
 
 
 # RStudio configuration
@@ -64,7 +64,7 @@ https://cran.r-project.org/ и https://www.rstudio.com/products/rstudio/download
 `<путь-к-установленному-R>\etc\Rconsole` в любом текстовом редакторе (блокноте) измените параметр: `language=en` в разделе `## Language for messages`.
 
 
-После того, как вы установили R, можно установить пакеты, которые понадобятся для работы. Для этого запустите RStudio и откройте файл: [install_packages.R](install_packages.R). Затем нажмите на панели инструментов RStudio кнопку **Source** . Желательно иметь быстрое соединение с Интернет, иначе загрузка потребует много времени. На Mac OS и Linux некоторые пакеты будут собираться из исходников, и могут возникать ошибки. Попробуйте закомментировать команды, в которых они возникают и запустить скрипт повторно.
+После того, как вы установили R, можно установить пакеты, которые понадобятся для работы. Для этого запустите RStudio и откройте файл: [install_packages_full.R](install_packages_full.R). Затем нажмите на панели инструментов RStudio кнопку **Source** . Желательно иметь быстрое соединение с Интернет, иначе загрузка потребует много времени. На Mac OS и Linux некоторые пакеты будут собираться из исходников, и могут возникать ошибки. Попробуйте закомментировать команды, в которых они возникают и запустить скрипт повторно.
 Также можно не устанавливать сразу все пакеты, а делать это по необходимости - если не хватает пакета, который используется в примерах курса или нужен для работы вашего скрипта.
 
 
