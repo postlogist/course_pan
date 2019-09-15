@@ -1,0 +1,180 @@
+---
+title: "An example R Markdown notebook"
+author: "Zakhodiakin G.V., postlogist@gmail.com"
+date: "06.09.2019"
+output: 
+  html_document: 
+    toc: true
+    toc_float: true
+---
+
+# Introduction
+
+In contrast to a script, an R Markdown Document may contain both code and text, graphics, mathematical formulae, and the code's output. Such documents are stored as a plain text files with .Rmd extension.
+When loaded in RStudio, R Markdown Documents are displayed as interactive notebooks consisting of text and code chunks, for example:
+
+```{r Loading Packages, message=FALSE, warning=FALSE}
+
+library(tidyverse)
+
+```
+
+
+You can execute the code chunks step-by-step (`Ctrl-Shift-Enter`), or run them all at once (see the `Run` button's menu in RStudio).
+
+
+```{r Loading and viewing a built-in dataset}
+
+data(mpg)
+head(mpg)
+
+```
+
+The results are displayed just after the code chunk creating them - very cool!
+
+Similarly, text ouptut and plots are displayed just after the code chunk.
+
+```{r Visualization of the relationship and calculation of Persons r}
+
+# Data Visualization
+qplot(x = hwy, y = cty, data = mpg)
+
+# Computing the corellation coefficient
+cor.test(~ cty + hwy, data = mpg) 
+
+```
+
+
+```{r Building and evaluating a regression model}
+
+# Model building
+m_cty <- lm(cty ~ hwy, data = mpg)
+
+# Viewing model summary
+summary(m_cty) 
+
+```
+
+The calclulated results can be embedded in a text: 
+
+The model's $R^2$ is `r round(summary(m_cty)$r.squared, 3)`.
+
+Let's visualize the model we've built.
+
+```{r Visualizing the model}
+
+# Getting the model coefficients
+coef_m_cty <- coef(m_cty)
+
+# Plotting data and the trend line
+qplot(x = hwy, y = cty, data = mpg) +
+  geom_abline(intercept = coef_m_cty[1], 
+              slope = coef_m_cty[2],
+              colour = "red") +
+  labs(title = "City and highway mileage",
+       y = "City mileage, miles per gallon",
+       x = "Highway mileage, miles per gallon")
+```
+
+In contrast to scipts, the working directory for a markdown document is always the directory containing this R Markdown document. Thus we don't care about setting the working directory.
+As a best practice, always store all analysis-related files in the same folder, as the R markdown document that uses them, or in some sub-folders.
+
+```{r Saving a plot to file}
+
+ggsave("example_plot_2.png")
+
+```
+
+In R Studio we can see the output in the same window, as the R Markdown Document. But despite this, the output is not stored in the Rmd file. This significantly simplifies working with Rmd files via source control systems, like Git/GitHub. The changes in files are displayed in a human readable form.
+
+
+When you need to send you analysis results to another person, you can convert, or 'Knit' the R Markdown document into a HTML web-page or a Word document, that will contain all the code, text and output. The resulting file is self-contained and can be displayed even when your recipient doesn't have R on his or her computer. Or even phone.
+
+To compile the report, press the `Knit` button on the RStudio toolbar.
+
+
+
+
+# An example data analysis using data from the Internet
+
+R can load data from local files, as well as from remote sources, such as web servers. In this example, we'll download a time series from the [Sophist database](http://sophist.hse.ru) maintainted by HSE.
+
+To run this example, we'll need `forecast` and `sophisthse` packages, that are included in the R Portable distribution prepared for this class. If you did install R using standard installers, you'll probably need to install these packages. In this case, uncomment and run the following chunk once:
+
+```{r Installing Packages}
+#install.packages("forecast")
+#install.packages("sophisthse")
+```
+
+Don't forget to comment or remove the lines above, when the packages are installed. This needs to be done just once.
+
+
+Loading the packages (usually this chunk will be at the top of the document)
+
+```{r Loading the packages}
+library(forecast)
+library(sophisthse)
+```
+
+
+Downloading the time series data (Retail Turnover in Russia)
+
+```{r Loading the RTRD_M series}
+retail <- sophisthse('RTRD_M')
+head(retail)
+sophisthse_metadata(retail)
+```
+
+Let's keep only the data for the retail turnover in monetary units (RTRD_M)` and see, how the time series looks like.
+
+```{r Plotting the time series}
+
+rtrd_m <- retail[, 'RTRD_M']
+autoplot(rtrd_m)
+
+```
+
+
+The historical period is very deep. Let's keep just the data since 2010.
+
+
+```{r Selecting data}
+
+rtrd_subset <- window(rtrd_m, start = c(2010, 1)) #Beginning Year and Month 
+
+```
+
+Let's examine the seasonal structure for time series.
+
+```{r Time series decomposition}
+
+autoplot(decompose(rtrd_subset, type = 'multiplicative'))
+
+```
+
+One can see, that after the 2014's crisis the growth rate has declined.
+
+Now we'll calculate the forecast.
+As a first step, a model should be fit using historical data. By default, it will be selected automatically from the exponential smoothing family of models. 
+
+```{r Building and viewing the time series model}
+
+m_rtrd_subset <- ets(rtrd_subset)
+summary(m_rtrd_subset)
+
+```
+
+Now we have a model and can use it for forecasting. Let's use a 24 month forecasting horizon.
+
+```{r Forecasting}
+
+f_rtrd_subset <- forecast(m_rtrd_subset, h = 24)
+autoplot(f_rtrd_subset) +
+  labs(title = "Predicted retail turnover in Russia, Bln. Rub",
+       x = NULL,
+       y = NULL,
+       fill = "95% Prediction\ninterval")
+
+```
+
+
