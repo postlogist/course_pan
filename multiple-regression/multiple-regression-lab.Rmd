@@ -93,7 +93,9 @@ lm.fit
 
 
 ```{r}
+
 summary(lm.fit)
+
 ```
 
 We can use the `names()` function in order to find out what other pieces
