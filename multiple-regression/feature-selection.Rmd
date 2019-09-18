@@ -1,0 +1,983 @@
+---
+title: "Multiple regression: feature selection and model diagnostics"
+author: "Gleb Zakhodyakin, postlogist@gmail.com"
+date: "16.09.2019"
+output: 
+  html_document: 
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+options(width = 85) # make text output slightly wider
+options(digits = 3) # sets the precision of output 
+```
+
+
+# Introduction
+
+A multiple regression can include several explanatory variables from the dataset. The question is, which variables to include? This tutorial shows methods available to deal with the variable, or feature selection problem. We consider prediction of car's fuel efficiency based on car's attributes. We also consider ways to determine the most influential predictors as well as to improve the model's fit by including non-linear terms. Finally, redisual diagnostics is performed to judge upon the model's quality.
+
+
+# Preparation
+
+## Loading packages
+
+```{r Loading Packages, message=FALSE}
+library(memisc) # model comparison in a table
+library(leaps) # best subsets regression
+library(car) # power transforms
+library(glmnet) # Lasso and Ridge regression
+library(tidyverse) # data manipulation
+library(GGally) # scatterplot matrices in ggplot
+library(ggfortify) # diagnostic plots in ggplot
+library(modelr) # useful functions to work with modeling results in tidyverse
+library(broom) # for tidying the modeling results
+```
+
+
+## Loading data
+
+```{r Loading data, warning = FALSE, message = FALSE}
+cars <- read_csv2("datasets/cars.csv", skip = 25) 
+```
+
+The data contains a few missing observations. Here we get rid of them.
+
+```{r Removing observations with NAs}
+cars <- na.omit(cars)
+```
+
+
+# The Multicollinearity Problem
+
+## The source of Multicollinearity
+
+Let's consider a scatterplot matrix for car's features.
+
+```{r The Scatterplot Matrix, fig.height=10, fig.width=10, message=F, warning=F}
+
+# The Scatterplot Matrix
+cars %>% 
+  select_if(is.numeric) %>%
+  ggpairs(lower = list(continuous = wrap("smooth_lm", color = 'blue')))
+```
+
+All numerical variables are correlate with `mpg`. But one can also see, that many of them are also correlated with each other. For example, a correlation coefficient for a car's `length` and `wheelbase` is .84. 
+This indicates, that when included in the model, both variables will bear a very similar information about a car:
+
+
+![Wheelbase](figures/wheelbase.png)
+
+
+The term **Multicollinearity** denotes a situation when several predictors in a model are highly correlated. They bear duplicated information about observations. Multicollinearity is a strong linear relationship between two or more predictors in a model.
+
+
+## The impact of multicollinearity
+
+Let's consider, how multicollinearity impacts the model. We'll compare a model containing just `curb_wgt` (weight), `horsepow` (engine's power) as a predictor and a model which also contains the `fuel_cap` (fuel tank capacity) variable. On its own the latter variable is a good predictor for `mpg` and has a second-largest correlation coefficient with `mpg`: $r = -0.80$. It is however also correlated with the `curb_wgt`: $r = 0.86$.
+
+We'll compare the models side by side using `memisc::mtable()` function.
+
+```{r Changes in the model when adding a correlated predictor}
+m_wgtpow <- lm(mpg ~ curb_wgt + horsepow, data = cars)
+m_wgtpowfuel <- lm(mpg ~ curb_wgt + horsepow + fuel_cap, data = cars)
+
+mtable(m_wgtpow, m_wgtpowfuel)
+```
+
+The quality (in terms of $R^2$) has slightly imroved. But notice how the standard error for `curb_wgt` has increased to a factor of 2! This is one of the negative impacts of multi-collinearity.
+
+In addition to inflating the standard errors for slope coefficients, multicollinearity obscures the interpretability of the individual slope coefficients. We assumed, that each predictor contributes independently of all others. Under this assumption, it's slope coefficient $ \hat{\beta_j} $ can be interpreted as a marginal effect of $x_j$. This means, that a unit change in `x_j` holding all other predictors fixed, will lead to $ \hat{\beta_j} $ change in $y$.
+Under multicollinearity, the predictors can't be changed individually anymore, so the coefficients can't be interpreted 
+individualy. For example, a larger car needs a larger fuel tank, to compensate for it's larger fuel consumption.
+
+
+In deeper manuals on multiple regression you can learn, that the coefficient estimates are correlated to each other. This relationship is described by the *variance-covariance matrix*, which is another by-product of the Least Squares procedure. This matrix contains variances for coefficient estimates (i.e. squared standard errors of the coefficients) on the main diagonal. The non-diagonal elements are covariances for pairs of coefficients.
+
+```{r Variance Covariance Matrix}
+round(vcov(m_wgtpowfuel), 3) 
+```
+
+If two coefficient have a large covariance then the standard error for these will increase. When one of such predictors is dropped from the model, the estimated slope coefficient for the other will change. In some cases, this may even lead to an opposite sign of the remaining coefficient (i.e. the estimated relationship will change its direction). For example, in a demand forecasting model the price can get a positive slope, which is very strange from a practical point of view.
+
+
+## How to measure multicollinearity?
+
+To quantify multicollinearity, the **variance inflation factor**  is computed for each of the predictors in the model:
+
+$$ VIF_j = \frac{1}{1-R^2_j}, j=1 \ldots k $$
+
+Here $R^2_j$ is a determination coefficient for a regression model where the predictor $x_j$ is the outcome, and the remaining $ k - 1 $ predictors are explanatory variables. This shows us, how close the information contained in $ x_j $ can be reproduced using the remaining predictors. For a model with $k = 2$ predictors, $R^2_j$ - is just the squared correlation coefficient for these two predictors.
+
+When predictor $x_j$ is not linearly related to other predictors (i.e. it bears completely new information) then   $R^2_j = 0$ and $VIF_j = 1$. When there's such relationship,  $VIF_j > 1$. 
+
+Whem $VIF_j \approx 1$, the multicollinearity is small or absent. This predictor doesn't inflate the standard errors for other model's coefficients.
+
+When $VIF_j \gg 1$, the estimate for its slope is unstable. It may change significantly when other predictors are added to the model, or it may become insignificant. Large  $ VIF $ means duplicate information added with different predictors. The information added with a predictor having large  $ VIF $ was already explained by other predictors.
+
+When $VIF > 4$ we can assume a strong multicollinearity.
+
+To compute $VIF$ in r, `car::vif()` function is used:
+
+```{r Computing VIFs}
+
+vif(m_wgtpowfuel) %>% 
+  round(1)
+
+```
+
+
+Despite the fact multicollinearity complicates the inference (increased SE's and correlated coefficient estimates), it doesn't impair prediction in any way. The only problem here would be the case, when the number of observations is small, and number of included predictors is large. This will produce an overly flexible model which can overfit the training data.
+
+
+## Linear dependency among predictors
+
+There is one case, when extreme multicollinearity leads to inability to estimate the model's coefficients. This happens when some included predictors are perfectly linearly related. The Ordinary Least Squares involves inversion of the data matrix, which can't be performed when linearly dependent columns are present. 
+
+Let's demonstrate this on an example. We'll try to estimate a model, that predicts car's `mpg`  based on it's width both in inches and centimeters. Clearly, two width measures are proportionally, i.e. linearly dependent to each other.
+
+```{r Estimating a model with linearly dependent predictors}
+
+cars_multi <- cars %>%
+  mutate(width_cm = width * 2.54)
+
+m_width_cm <- lm(mpg ~ width_cm, data = cars_multi)
+coef(m_width_cm) # no problem
+
+m_width_both <- lm(mpg ~ width + width_cm, data = cars_multi)
+coef(m_width_both) # only one slope can be estimated, the other is excluded
+```
+
+## Linearly related dummy variables
+
+A particular case for linear dependence is a so called **dummy trap**, when the dummy variables, included into a model are linearly dependent.
+
+This happens, when we include a dummy variable for each level of a categorical variable. For exaxmple, when we include a dummy for each level of vehicle `type` - automobile and truck - the resulting two dummy variables will be perfectly linearly dependent, since we know, that exactly one of them should be 1:
+
+
+$$ automobile + truck = 1 $$
+
+Thus, when both variables are included in the model, one slope coefficient can't be estimated:
+
+```{r Linearly dependent dummy variables}
+
+cars_dummy <- cars %>%
+  mutate(truck = ifelse(type == 'Truck', 1, 0), 
+         automobile = ifelse(type == 'Automobile', 1, 0))
+
+m_dummy <- lm(mpg ~ horsepow + truck + automobile, data = cars_dummy)
+coef(m_dummy) # Only one slope for a dummy variable is estimated
+```
+
+This is why the number of dummy variables should be one less the number of categories. 
+
+In R, the categorical variables should be preferably treated as factors. This simplifies modeling and prevents the dummy trap. Text variables will be automatically converted to factors. However you may wish to control the factor levels manually, to select a suitable baseline category, which will correspond to the first factor level. By default, the ordering of levels will be alphabetical.
+
+```{r Using factors for categorical variables}
+
+lm(mpg ~ horsepow + type, data = cars) %>% 
+  coef() # Only dummy for type = Truck is included
+
+```
+
+
+
+# Feature selection
+
+## The Full Model
+
+Let's estimate a **full model** that includes all available predictors.
+
+```{r The full model}
+
+m_full <- lm(mpg ~ ., data = select(cars, country:mpg)) # . means 'all remaining variables'
+
+summary(m_full)
+
+vif(m_full) %>% round(1)
+
+```
+
+Some predictors have large VIFs. Some slopes are not significant due to large standard errors. 
+
+The cause for this can be seen in the scatterplot matrix at the top of this tutorial: we've learned, that many car's attributes are correlated and bear the same information. To improve the interpretability of the model, we can simplify it by removing some predictors.
+
+
+## Criteria for selecting the best model
+
+The most popular metric for comparing regression models is $R^2$. Hovewer, it has an issue of always preferring a larger model. Because of this, it can be used only for comparing models with  the same number of predictors.
+
+To overcome this issue, other metrics are used for model selection:
+
+ - Adjusted $R^2$
+ - Akaike Information Criterion, AIC
+ - Corrected AIC, AICc
+ - Bayesian Information Criterion, BIC
+ - Mallow's Cp](https://en.wikipedia.org/wiki/Mallows's_Cp)
+ 
+All of these metrics use the same principle: they penalize the model for having larger number of predictors. I.e. the residual standard error, or the proportion of unexplained variance are increased proportionally to the number of predictors.
+
+We'll demonstrate this on example of Adjusted $ R^2 $, AIC and BIC:
+ 
+ 
+ **Adjusted  $R^2$** is defined as:
+ 
+ $$ R^2_{adj} = 1 - (1-R^2) \cdot \frac{n-1}{n-k-1} $$
+ 
+For larger number of predictors $k$ the fraction at the right hand side is larger. So, the product of of it and the *un*explained variance proportion $(1-R^2)$ is also larger. This ultimately leads to lower explained variance proportion.
+
+
+**Akaike Information Criterion (AIC)** is calculated based on residual sum of squares $RSS$ and includes a penalty which is dependent on the number of predictors $k$: 
+
+$$ AIC = n \ln (RSS/n) + 2(k+2) $$
+
+AIC has no upper/lower limits in contrast to $R^2_{adj}$. Lower values are better.
+
+When the number of observations $n$ is small, using the above formula tends to prefer models with too many predictors. For such cases, a **corrected AIC** (AICc) has been introduced. In this metric, the penalty for complexity is gradually decreasing when the sample size $n$ is increasing:
+
+$$ AICc = AIC + \frac{2 (k+2) (k+3)}{n - k - 3} $$
+
+
+** Bayesian Information Criterion (BIC)** is similar to AIC, but the penalty term is different:
+
+$$ BIC = n \ln (RSS/n) + (k+2) \cdot \ln n $$
+
+BIC has a larger penalty compared to AIC, so using it tends to select models with smaller number of predictors
+
+```{r Comparing the penalty terms of AIC and BIC, echo=FALSE}
+
+f_AIC <- function(k) { 
+  2 * (k + 2)
+}
+
+f_AICc <- function(k, n) {
+  f_AIC(k) + 2 * (k + 2) * (k + 3) / (n - k - 3)
+}
+
+f_BIC <- function(k, n) {
+  (k + 2) * log(n)
+}
+
+
+ggplot(data = tibble(k = seq(0, 30)), 
+       mapping = aes(x = k)) +
+  stat_function(mapping = aes(colour = "AIC"), 
+                fun = f_AIC) +
+  
+  stat_function(mapping = aes(colour = "AICc, n = 50"), 
+                fun = f_AICc, args = list(n = 50)) +
+  
+  stat_function(mapping = aes(colour = "AICc, n = 500"), 
+                fun = f_AICc, args = list(n = 500), 
+                linetype = 'dashed' ) +
+
+
+  stat_function(mapping = aes(colour = "BIC, n = 50"), 
+                fun = f_BIC, args = list(n = 50)) +
+  
+  stat_function(mapping = aes(colour = "BIC, n = 500"), 
+                fun = f_BIC, args = list(n = 500), 
+                linetype = 'dashed' ) +
+  
+  scale_colour_manual(values = c("gold", "red", "darkred", "lightskyblue", "blue")) +
+  
+  labs(title = "Comparing the penalty terms of AIC, AICc and BIC",
+       x = "Number of predictors k",
+       y = "Penalty")
+
+```
+
+
+
+## Best subsets regression
+
+For smaller datasets the best model according to selected criterion can be choosen using the complete enumeration of all possible models. For 3 predictors, we could consider one model without predictors, 3 one-predictor models, 3 two-predictor models and one 3-predictor model - 8 in total. For a given number of predictors $k$ the number of models to consider is growing exponentially and is $2^k$. For $k = 20$ predictors the number of models to compare is about 1 million.
+
+
+In R, we use the `leaps::regsubsets()` function, that does best subsets regression. The maximum number of predictors in the model  $ k_{max} \le k $ can be provided as a parameter. The function returns the list of best models for each number of predictors from 1 to $ k_{max} $. By default, the function selects the best model based on  $R^2_{adj}$ metric.
+
+```{r Best Subsets regerssion}
+best_models <- leaps::regsubsets(mpg ~ ., # all predictors are considered
+                                 nbest = 2,  # two best models for each number of predictors
+                                 nvmax = 10, # maximum number of predictors, 8 by default
+                                 data = select(cars, country:mpg))
+
+# Summary of the models selected
+summary(best_models) 
+
+```
+
+
+The results can be visualized, though only base R graphics can be used for this.
+
+```{r Plotting the model summary, fig.height = 7}
+
+# By default, the plot will use black fill color. Let's chose something less depressing
+# See RColorBrewer::display.brewer.all()
+mycolors <- rev(RColorBrewer::brewer.pal(n = 5, name = 'Greens')) 
+
+# Plotting the model summary
+plot(best_models, scale = "adjr2", col = mycolors,
+     main = "Best subsets model according to adjusted R^2")
+
+```
+
+Each row on a plot is a model. The models are ordered by $R^2_{adj}$. The filled cells denote selected predictors, the blank cells represent predictors not included into a model.
+
+The best model is on top. For our example, this model includes all the variables except the width and length.
+
+Alternative model ranking can be specified, which will produce a different list of best moderls. If we choose BIC, which has largel penalty for complexity, smaller models will be preferred:
+
+```{r Best models according to BIC, fig.height = 7}
+# Plotting the summary
+plot(best_models, scale = "bic", col = mycolors, 
+     main = "Best models according to BIC")
+
+```
+
+Here a much simpler model was selected: just 5 predictors instead of 8.
+
+
+**Limitations of the method**
+
+Despite best subsets regression can select the best possible model for a given number of predictors, it's use is subject to the following limitations:
+
+ - It's computationally demanding for large number of predictors. The numbers of models to consider is $ 2^k $ for $k$ predictors
+ 
+ - Different selection criteria lead to different best models. It's up to the modeler, which metric to select. If model sparsity is preferred, BIC is the best option.
+ 
+ - The method can't automatically deal with non-linear relationships and interactions. The modeler must explore data for the presence of such relationships and include the corresponding terms to the model's specification.
+ 
+
+## Stepwise regression
+
+**Stepwise regression** is a heuristic algorithm for variable selection. It is used when a number of predictors is large and best subsets regression is infeasible. The stepwise algorithm works iteratively. At each step, a selection of best variable to include or exclude is made. There are 3 variations of the algorithm:
+
+- **Backward stepwise** - an approach, where a large model is iteratively simplified by removing the weakest predictors;
+- **Forward stepwise** - an approach, where variables are iteratively added to a simple model, until it's quality is improving;
+- **Stepwise stepwise** - an approach, where at each step a variable can be added, while another variable can be also removed from the model.
+
+
+To quantify the model quality, a penalized criterion is used - AIC, BIC or adjusted $R^2$ for example.
+
+In R, these algorithms are implemented in the `MASS:stepAIC()` function.
+
+Let's consider some examples of stepwise regression.
+
+
+### Backward stepwise in R
+
+The method tries to simplify the initial complex model. The function takes as an input a regular regression model created with `lm()`. 
+
+```{r Backward Stepwise}
+
+m_backward <- stepAIC(m_full, direction = "backward")
+
+```
+
+You can suppress the output of intermediate models at each step using `trace = F` argument. You can also change the weight of the penalty term  (`k`). By default, it's 2 (this corresponds to AIC). You can change it to log(n), where `n` is the number of observations. This will correspond to  BIC.
+
+
+
+### Forward stepwise in R
+
+For using forward stepwise or stepwise stepwise algorithms, the range of models to consider should be provided. To do so, provide the initial simplest and the most complex model to consider using the  `scope = ` argument. In the following example we'll use the null and the full model:
+
+
+```{r Forward Stepwise}
+
+# The null model
+m_null <- lm(mpg ~ 1, data = dplyr::select(cars, country:mpg))
+
+# Forward Stepwise
+m_forward <- stepAIC(m_null, 
+                     scope = list(lower = m_null, upper = m_full),
+                     direction = 'forward')
+
+```
+
+
+### Stepwise stepwise
+
+```{r Stepwise Stepwise}
+m_stepwise <- stepAIC(m_null, 
+                      scope = list(lower = m_null, upper = m_full), 
+                      direction = 'both')
+```
+
+For comparison, we'll use BIC for model selection using the stepwise stepwise algorithm
+
+```{r Stepwise Stepwise c BIC}
+m_stepwise_BIC <- stepAIC(m_null, 
+                      scope = list(lower = m_null, upper = m_full), 
+                      direction = 'both',
+                      trace = FALSE,
+                      k = log(nrow(cars))) # BIC uses a penalty of (k + 2) * log(n)
+
+m_stepwise_BIC
+```
+
+
+Now we'll compare the best models obtained with different selection algorithms:
+
+
+```{r Comparing the best models}
+
+# The best model from best subsets regression using BIC
+m_best <- lm(mpg ~ type + horsepow + curb_wgt + fuel_cap, data = cars) 
+
+memisc::mtable(m_backward, m_forward, m_stepwise, m_stepwise_BIC, m_best)
+```
+
+
+
+**Limitations of the method**
+
+In our example, all three stepwise regression algorithms produced the same result (using AIC). When the selected metric was changed to BIC, a simpler model was produced. This model appeared to be the same, as proposed by the best subsets regression (also using BIC). In general, this may not be the case, since all stepwise algorithms are **greedy**.  A **greedy algorithm** makes the locally optimal decision at each step (selecting a variable with largest improvement in the metric in case of stepwise regression). But this approach doesn't guarrantee convergence to the best possible model.
+
+Also, as with the best subsets regression, the analyst is responsible for modeling non-linear relationships and interactions. The variable selection methods are unable to consider them automatically.
+
+
+## Regularization
+
+As we've seen, multicollinearity of predictors complicates the inference by inflating the standard errors for coefficient estimates. This is not an issue for a pure prediction task. But larger models are also more flexible, and flexibility may lead to overfitting training data, when the ratio of sample size to the number of coefficients is low (there are different estimates: some sources say it should be greater than 4, others - greater than 10). In case when the number of coefficients is equal or less to the sample size, the coefficients can't be estimated at all.
+
+A model that is tuned too much to training data captures not only the true relationship between predictors and the outcome, but also the noise in data. A simpler, less flexible model, would be more stable on new data. 
+
+We've considered a few methods to make a multiple regression less flexible by constraining the number of predictors in the model. There is another approach to decrease the model complexity. Instead of limiting the number of predictors, we could constrain the magnitude of the coefficients $\hat\beta_j$ themselves.
+Such approach is called **regularization**. 
+To constrain the coefficients, it uses a penalty term dependent on the magnitude of coefficients, which is added to the loss function.
+
+There are 2 variants of regularizations based on different penalty terms.
+
+- The **ridge regression** uses sum of squared slope coefficients as a penalty term (L2-norm):
+
+$$ RSS(\hat\beta) + \lambda \sum_{j=1} ^k {\hat\beta_j^2} \to min$$
+
+Note that only the slope coefficients are included in the penalty term. The intercept $\hat\beta_0$ is not included.
+
+- The **Lasso regression** (*Least absolute shrinkage and selection operator*) uses the sum of coefficient magnitudes (L1-norm):
+
+$$ RSS(\hat\beta) + \lambda \sum_{j=1} ^k |\hat\beta_j| \to min$$
+
+An useful property of the Lasso method is its ability to completely exclude some predictos by shrinking their slope coefficients to zero.
+
+Both penalty terms contain $\lambda$ - a hyperparameter that determines the weight of the penalty. This hyperparameter can be tuned empirically, by comparing the model performance on test data.
+
+In R both methods are implemented in the `glmnet` package. This package also contains a hybrid method **elastic net**, that combines the penalty terms from both Ridge and Lasso regression: 
+
+$$ RSS(\hat\beta) + \lambda \left(\alpha\sum_{j=1} ^k |\hat\beta_j| + (1 - \alpha) \sum_{j=1} ^k {\hat\beta_j^2} \right) \to min$$
+
+Here $\alpha$ is another hyperparameter, that blends the penalty terms from both methods.
+
+### Data pre-processing for glmnet
+
+Unfortunately, the `glmnet` package can't use data frames or tibbles, so the input data must be pre-processed. The predictors should be placed into a matrix. If there are categorical variables, they must be dummy-coded. The oucome variable should be a separate vector.
+
+```{r Pre-processing data for glmnet, warning=F, message=F}
+y <- cars$mpg
+
+X <- cars %>%
+  mutate(truck = ifelse(type == 'Truck', 1, 0), 
+         europe = ifelse(country == 'Europe', 1, 0)) %>%
+  select(-(manufact:type), -mpg) %>%
+  as.matrix()
+
+head(X, 4) 
+```
+
+### Ridge regression using glmnet
+
+Now we'll estimate a Ridge regression model using `glmnet`. For this, we set $\alpha = 0$, and $\lambda$ will be automatically selected.
+
+```{r Ridge regression in glmnet - tuning the lambda}
+
+# Tuning lambda hyperparameter
+set.seed(12345)
+cv_ridge <- cv.glmnet(X, y, alpha = 0, parallel = T)
+
+
+# Plotting the model test set error depending on lambda
+plot(cv_ridge, xvar = "lambda")
+
+# Plotting the model coefficients depending on lambda
+plot(cv_ridge$glmnet.fit, xvar = "lambda", label = T)
+
+```
+
+Larger $\lambda$ shrinks the coefficients towards zero. 
+
+By default, `glmnet()` standardizes the coefficients, to make the penalty term scale independent. If necessary, we can disable standardization by adding `standardize = FALSE` argument.
+
+```{r Ridge regression - the coefficients for the best model}
+
+
+# Best lambda
+cat("The minimal error is obtained with lamda =", cv_ridge$lambda.min, "\n\n")
+
+
+# Best model coefficients (according to test set error)
+coef(cv_ridge, s = c(0, cv_ridge$lambda.min))
+
+```
+
+The column labeled `1` contains the coefficient for the model without regularization ($\lambda = 0$), and the `2` column contains the coefficients for a model with the optimal $\lambda$.
+
+
+Let's predict `mpg` for a car with the following attributes:
+
+- price: 40 K$, 
+- engine size: 4 литра,
+- horsepower: 300,
+- wheelbase: 130 inches,
+- width: 70 inches,
+- length: 200 inches,
+- weight: 4 k pounds,
+- fuel tank capacity: 20 gallons.
+
+
+The predictors should be placed into a matrix. In our case the matrix will contain just one row for a single car. 
+
+You can see other methods to create a matrix in help: `?matrix`.
+
+```{r New data}
+
+new_car <- tibble( # a table with one row
+   price = 40,
+   engine_s = 4,
+   horsepow = 300,
+   wheelbas = 130,
+   width = 70,
+   length = 200,
+   curb_wgt = 4,
+   fuel_cap = 20,
+   truck = 0,
+   europe = 1) %>% 
+  as.matrix() # converting to a matrix 
+
+new_car 
+```
+
+
+```{r Forecasting using the ridge regression}
+
+# Forecast
+pred <- predict(cv_ridge, newx = new_car, s = c(0, cv_ridge$lambda.min))
+
+# Printing the output
+colnames(pred) <- c("Without Regularization", "With Regularization")
+pred
+```
+
+In this example, the results are identical, since the coefficients haven't changed much by regularization.
+
+### Lasso regression using glmnet
+
+Now we build a Lasso regression model. We set $\alpha = 1$, and $\lambda$ will be auto-selected.
+
+```{r Lasso regression in glmnet - tuning lambda}
+
+# Tuning the lambda
+set.seed(12345)
+cv_lasso <- cv.glmnet(X, y, alpha = 1, parallel = T)
+
+
+# Plotting the model test set error depending on lambda
+plot(cv_lasso, xvar = "lambda")
+
+
+# Plotting the model coefficients depending on lambda
+plot(cv_lasso$glmnet.fit, xvar = "lambda", label = T)
+
+```
+
+Notice how the coefficients are shrinking towards zero with increased $\lambda$. In contrast to Ridge regression, at some points some coefficients become exactly zero, and the corresponding predictor is effectively removed from the model. 
+
+
+```{r Lasso regression - best model coefficients}
+
+# Best lambda
+cat("The minimal error is obtained with lamda =", cv_lasso$lambda.min, "\n\n")
+
+
+
+# Best model coefficients
+coef(cv_lasso, s = c(0, cv_lasso$lambda.min))
+
+```
+
+The column labeled `1` contains the coefficient for the model without regularization ($\lambda = 0$), and the `2` column contains the coefficients for a model with the optimal $\lambda$.
+
+
+Some predictors (`price`, `wheelbas`, `width`, `length`) got the zero slope coefficients and thus were efficiently removed from the model.
+
+Now we'll make a forecast for the same car using the Lasso model:
+
+```{r Forecasting using the Lasso model}
+
+# Forecasting
+pred <- predict(cv_lasso, newx = new_car, s = c(0, cv_lasso$lambda.min))
+
+# Printing out the forecast
+colnames(pred) <- c("Without regularization", "With regularization")
+
+pred
+
+```
+
+In this case, the results are slightly different, since some variables were removed from the model.
+
+You can see more examples of using `glmnet` package here:
+
+ -  **Trevor Hastie, Junyang Qian** [glmnet Vignette](https://cran.r-project.org/web/packages/glmnet/vignettes/glmnet_beta.pdf)
+ -  **Ricardo Carvalho** [How to use Ridge Regression and Lasso in R](http://ricardoscr.github.io/how-to-use-ridge-and-lasso-in-r.html)
+ - Справка по `glmnet`
+ - ISLR book, 6.6 Lab 2: Ridge Regression and the Lasso on p.251
+
+
+# Standardization and centering of predictors
+## What predictors are influencing the outcome the most?
+
+Let's consider the best model according to BIC.
+
+```{r Best model summary}
+tidy(m_stepwise_BIC)
+
+```
+
+The model has 4 predictors. By looking just at the coefficients, it's not possible to tell, what is the most important predictor. The slope coefficients are scale-dependent. So, the weight is measured in thousand pounds, the data values are below 10. The horsepower has a magnitude of a few hundred. The coefficients reflect the units selected for predictors, and can't be compared directly.
+
+
+```{r The range of predictors}
+cars_dummy %>% 
+  select(curb_wgt, fuel_cap, truck, horsepow) %>%
+  map(range) %>% 
+  as_tibble()
+```
+
+
+To compare the coefficients, we can scale all predictors. One way of such scaling is standardization, when all predictors are replaced with z-scores:
+
+$$ z = \frac{x - \bar{x}}{S_x} $$
+
+All values are replaced with their deviation from the average, measured in the number of standard deviations. For example, $z=-1.5$ means that the corresponding value for $x$ was 1.5 standard deviations below the average.
+
+
+This method works the best, when the distribution of predictors is close to a normal. In shuch case, all scaled predictors will have the same standard normal distribution. The asymmetry in data distribution can prevent this.
+
+R includes a function for standardization - `scale()`.
+
+You can scale only quantitative variables. The categorical variables must be first dummy coded.
+
+```{r Standardizing predictors}
+
+cars_dummy_z <- cars_dummy  %>%
+  mutate_if(is.numeric, scale)
+
+cars_dummy_z_tall <- cars_dummy_z %>% 
+  select(curb_wgt, fuel_cap, truck, horsepow, mpg) %>% 
+  gather(key = "Variable", value = "Value", curb_wgt:mpg)
+
+# Descriptive statistics
+cars_dummy_z_tall %>% 
+  group_by(`Variable`) %>%
+  summarize(`Average` = round(mean(`Value`), 3), 
+            `Standard Deviation` = sd(`Value`))
+
+# Plotting distributions
+ggplot(data = cars_dummy_z_tall) +
+  geom_density(aes(x = `Value`, colour = `Variable`)) +
+  labs(title = "Distributions of predictors after standardization",
+       y = "Density")
+
+```
+
+
+Let's build a model using standardized predictors and outcome:
+
+
+```{r Model for standardized data}
+
+m_stepwise_BIC_z <- lm(mpg ~ curb_wgt + fuel_cap + truck + horsepow, data = cars_dummy_z) 
+
+tidy(m_stepwise_BIC_z) %>%
+  mutate_if(is.numeric, round, digits = 4)
+
+```
+
+Coefficients for a model that uses standardized predictors and outcome are called **standardized coefficients**. The standardized coefficients help to determine, what predictors are the most influential. 
+
+In our example increasing horsepower by one standard deviation will decrease `mpg` by 0.337 standard deviations. At the same time, increasing weight by 1 s.d. will decrease the `mpg` by .259 s.d.
+
+
+As can be seen in the density plot for standardized predictors shown above, using z-scores is not appropriate for dummy variables, since the distribution of such variables is not a normal distribution. Thus, it might be better to exclude the dummy variables from standardization. To make the scale of other predictors comparable to the scale of dummies, we can divide them by two standard deviations instead of one when scaling. In this case, the dummy variables are left intact, and thus the convenient factor functionality can be used.
+
+see Andrew Gelman, [Standardizing regression inputs by dividing by two standard deviations](http://andrewgelman.com/2006/06/21/standardizing_r/)
+
+```{r Standardizing by 2 standard deviations}
+
+scale2 <- function(x) {
+  scale(x)/2
+}
+
+cars_2z <- cars  %>%
+  mutate_if(is.numeric, scale2)
+
+```
+
+Coefficients for the model built on data standardized by two s.d.:
+
+```{r Regression coefficients for the data standardized by two sd}
+
+m_stepwise_BIC_2z <- lm(mpg ~ curb_wgt + fuel_cap + type + horsepow, data = cars_2z) 
+
+tidy(m_stepwise_BIC_2z) %>%
+  mutate_if(is.numeric, round, digits = 4)
+
+```
+
+
+The result is similar to the previous one. The most important predictor is `horsepow`. Vehicle type is the second most important predictor. 
+
+## A zero weight car?
+
+Let's consider again the model for non-standardized data
+
+```{r Original regression coefficients}
+tidy(m_stepwise_BIC) %>% select(term:estimate)
+```
+
+The slope coefficients have a straightforward interpretation: increasing weight by 1 thousand pounds decreased the mpg on 1.75 miles, on average. 
+But how about the intercept? 
+The model tells us, that a zero-weight, zero-horsepower, zero-fuel capacity automobile would have `mpg` of 39.7 miles. Such a result is mathematically correct, but hard to interpret in practice. 
+
+To simplifty the interpretation of the intercept in cases when zero values for predictors are not possible in practice, we can use another transformation of predictors. **Centering** a predictor replaces its values with deviations from the average for that predictor. It is similar to standardization, but we are not dividing by the s.d.
+
+$$ x_c = x - \bar{x} $$
+
+After centering, the average for the predictor becomes zero, and the resulting values show deviations from an average, or 'typical' value.
+
+In R, centering is performed by the same `scale()` function with an additional argument `scale = F`.
+
+```{r Centering predictors}
+
+cars_c <- cars %>% 
+  mutate_at(c("curb_wgt", "fuel_cap", "horsepow"), # these variables will be centered
+            scale, # the function to apply
+            scale = F) %>% # disable scaling
+  mutate(horsepow = horsepow / 100) # let's also rescale the units for horsepower to 100 hps to make ranges of predictors comparable
+
+
+cars_c %>% head(3)
+
+```
+
+Now we build a model with centered predictors
+
+```{r The model with centered predictors}
+m_stepwise_BIC_c <- lm(mpg ~ curb_wgt + fuel_cap + type + horsepow, data = cars_c) 
+
+mtable(m_stepwise_BIC, m_stepwise_BIC_c)
+
+```
+
+The slope coefficients didn't change (except for `horsepow` which has been scaled). 
+The interpretation of slope coefficients didn't change. Still, increasing the horsepower by 1 hundred hp would decrease the `mpg` by 2.55 miles on average (with all other attributes of a car kept equal).
+
+The intercept has now a meaningful interpretation: **A typical automobile would have `mpg` of 24.6 miles`**. `Typical` in this case means `curb_wgt`, `fuel_cap` and `horsepow` equal to average values for each predictor.
+
+
+
+# Диагностика остатков модели
+
+Как и в случае линейной регрессии, модель множественной регрессии основана на ряде допущений о свойствах случайного компонента модели, т.е. остатков. См. [первую часть](mlr-modeling.Rmd) лекции.
+
+Для диагностики остатков множественной регрессии можно воспользоваться теми же инструментами, что и для линейной регрессии.
+
+## Остатки исходной модели
+
+```{r Остатки исходной модели множественной регресии}
+autoplot(m_stepwise_BIC)
+```
+
+На графике остатков в зависимости от предсказанных значений можно видеть небольшое искривление, которое является следствием нелинейности зависимости. Поэтому можно рассмотреть вопрос о необходимости преобразования целевой переменной, или включения в модель нелинейных членов. Отклонения от нормальности заметны только в хвостах наблюдений, но число таких наблюдений невелико. Рост дисперсии при увеличении целевой переменной не наблюдается.
+
+## Выбросы и влиятельные наблюдения{#residuals_stepwise}
+Рассмотрим выбросы и влиятельные наблюдения более подробно.
+
+```{r Выбросы и влиятельные наблюдения}
+fit_stepwise_BIC <- m_stepwise_BIC %>% 
+  fortify() %>% # сохранили остатки, предсказания и показатели влиятельности в набор
+  merge(., cars) # добавили исходные данные (merge удаляет дублирующиеся при слиянии столбцы)
+
+ggplot(fit_stepwise_BIC, aes(.fitted, mpg)) +
+  geom_point(aes(size = .cooksd, colour = .hat)) +
+  geom_line(aes(.fitted, .fitted), 
+            colour = "red", linetype = "dashed") +
+  scale_colour_gradient(low = "black", high = "red") +
+  ggrepel::geom_label_repel(
+    data = filter(fit_stepwise_BIC, .cooksd > 4/nrow(cars)),
+    mapping = aes(label = model), alpha = 0.25) +
+  labs(title = "Влиятельные наблюдения",
+       x = "Прогноз mpg", y = "Факт mpg", 
+       colour = "Леверидж", size = "Расстояние Кука")
+ 
+```
+
+```{r Зависимость остатков от предсказанных значений}
+
+ggplot(fit_stepwise_BIC, aes(.fitted, .resid)) +
+  geom_point(aes(size = .cooksd, colour = .hat)) +
+  geom_hline(yintercept = 0,
+            colour = "red", linetype = "dashed") +
+  scale_colour_gradient(low = "black", high = "red") +
+  ggrepel::geom_label_repel(
+    data = filter(fit_stepwise_BIC, .cooksd > 4/nrow(cars)),
+    mapping = aes(label = model), alpha = 0.25) +
+  labs(title = "Зависимость остатков от предсказанных значений",
+       x = "Прогноз mpg", y = "Остаток", 
+       colour = "Леверидж", size = "Расстояние Кука")
+ 
+```
+
+
+Наибольший остаток имеет модель [Chevrolet Metro](https://wiki.zr.ru/Chevrolet_Metro). Это самая маленькая и экономичная из американских машин. 
+
+
+## Нелинейное преобразование целевой переменной
+
+Один из способов устранения нелинейности - степенное преобразование целевой переменной. Подходящую степень преобразования можно определить с помощью функции `car::powerTransform()`. Эта функция использует в качестве критерия выбора степень близости распределения остатков модели после преобразования к нормальному распределению.
+
+```{r Определение степени преобразования}
+powerTransform(m_stepwise_BIC)
+```
+
+Полученную степень лучше округлить. Значение довольно близко к нулю, который соответствует использованию логарифмического преобразования.
+
+Попробуем оценить модель с преобразованной целевой переменной.
+
+```{r Подгонка модели с логарифмом}
+
+m_log <- lm(log10(mpg)  ~ curb_wgt + fuel_cap + type + horsepow, data = cars)
+
+tidy(m_log) %>% mutate_if(is.numeric, round, digits = 3)
+
+```
+
+
+
+```{r Остатки модели с логарифмом}
+autoplot(m_log)
+```
+
+Ситуация улучшилась незначительно. Появилось искривление на графике для оценки гетероскедастичности. В данном случае предпочтение стоит отдать более простой модели без логарифма.
+
+## Добавление нелинейных предикторов в модель
+
+Для выявления нелинейных зависимостей от объясняющих переменных и пропущенных предикторов можно применять метод графического анализа остатков, строя диаграммы рассеяния для остатков в зависимости от других переменных в наборе данных.
+
+```{r Зависимость остатков исходной модели, fig.height=7}
+fit_cars_stepwise <- cars %>% 
+  add_residuals(m_stepwise_BIC) %>%
+  gather(key = "Переменная", value = "Значение", price:fuel_cap)
+
+ggplot(fit_cars_stepwise, aes(x = `Значение`, y = `resid`)) +
+  geom_point() + 
+  geom_smooth(se = F) +
+  facet_wrap(~ `Переменная`, scales = "free_x", ncol = 2) +
+  labs(title = "Остатки исходной модели в зависимости от других переменных",
+       y = "Остаток", x = NULL)
+```
+
+Выраженной зависимости остатков от не включенных в модель переменных не наблюдается (есть сомнения только насчет объема двигателя). Видна нелинейность зависимости пробега от веса. Поэтому можно попытаться включить в модель члены более высоких порядков для веса.
+
+
+```{r Подгонка модели со степенями веса}
+
+m_poly <- lm(mpg  ~ curb_wgt + I(curb_wgt^2) + I(curb_wgt^3) + I(curb_wgt^4) + 
+            fuel_cap + type + horsepow,
+             data = cars)
+
+mtable(m_stepwise_BIC, m_poly)
+
+
+```
+
+Показатели немного улучшились, коэффициенты для веса и его степеней значимы.
+
+Мы получили довольно сложную модель:
+
+$$ \widehat{mpg} = 301 - 284 curb\_wgt + 111 curb\_wgt^2 - 19.0 curb\_wgt^3 + 1.192 curb\_wgt^4 -\\
+- 0.240 fuel\_cap - 3.15 (type = Truck) - 0.023 horsepow $$
+
+Сравним остатки.
+
+```{r Остатки модели со степенями веса}
+autoplot(m_poly)
+```
+
+Ситуация улучшилась, нелинейность практически не заметна.
+
+## Остатки финальной модели
+Зависимость остатков новой модели от остальных переменных.
+
+```{r Остатки полиномиальной модели в зависимости от остальных переменных, fig.height=7}
+fit_cars_poly <- cars %>% 
+  add_residuals(m_poly) %>%
+  gather(key = "Переменная", value = "Значение", price:fuel_cap)
+
+ggplot(fit_cars_poly, aes(x = `Значение`, y = `resid`)) +
+  geom_point() + 
+  geom_smooth(se = F) +
+  facet_wrap(~ `Переменная`, scales = "free_x", ncol = 2) +
+  labs(title = "Остатки полиномиальной модели в зависимости от других переменных",
+       y = "Остаток", x = NULL)
+```
+
+Зависимости остатков от других переменных исчезли. Таким образом информация, доступная в этом наборе данных, была использована полностью.
+
+В заключение сравним предсказания модели с фактом. 
+
+```{r Выбросы и влиятельные наблюдения полиномиальной модели}
+fit_cars_poly <- m_poly %>% 
+  fortify() %>% # сохранили остатки, предсказания и показатели влиятельности в набор
+  merge(., cars) # добавили исходные данные (merge удаляет дублирующиеся при слиянии столбцы)
+
+ggplot(fit_cars_poly, aes(.fitted, mpg)) +
+  geom_point(aes(size = .cooksd, colour = .hat)) +
+  geom_line(aes(.fitted, .fitted), 
+            colour = "red", linetype = "dashed") +
+  scale_colour_gradient(low = "black", high = "red") +
+  ggrepel::geom_label_repel(
+    data = filter(fit_cars_poly, .cooksd > 4/nrow(cars)),
+    mapping = aes(label = model), alpha = 0.25) +
+  labs(title = "Влиятельные наблюдения",
+       x = "Прогноз mpg", y = "Факт mpg", 
+       colour = "Леверидж", size = "Расстояние Кука")
+ 
+```
+
+В сравнении с результатом для предыдущей модели (см. [Выбросы и влиятельные наблюдения](#residuals_stepwise)) искривление облака точек практически не заметно, точки симметрично расположены относительно прямой "идеального результата". Отклонения прогноза и факта существенно уменьшились. 
+
+
+```{r Зависимость остатков полиномиальной модели от предсказанных значений}
+
+ggplot(fit_cars_poly, aes(.fitted, .resid)) +
+  geom_point(aes(size = .cooksd, colour = .hat)) +
+  geom_hline(yintercept = 0,
+            colour = "red", linetype = "dashed") +
+  scale_colour_gradient(low = "black", high = "red") +
+  ggrepel::geom_label_repel(
+    data = filter(fit_cars_poly, .cooksd > 4/nrow(cars)),
+    mapping = aes(label = model), alpha = 0.25) +
+  labs(title = "Зависимость остатков от предсказанных значений",
+       x = "Прогноз mpg", y = "Остаток", 
+       colour = "Леверидж", size = "Расстояние Кука")
+ 
+```
+
+
+Наибольшими остатками и расстоянием Кука выделяются два типа машин - экономичные машины (Chevrolet Metro, Hyundai Accent, Mitsubishi Mirage), крупные легковые автомобили (Dodge Ram Wagon, Cadillac Escalade, Lincoln Navigator, Honda Odyssey, Toyota RAV4, Jeep Wrangler) и спортивные машины (Dodge Viper, Plymouth Prowler). Возможно, в этой области имеется потенциал для улучшения модели путем включения типа машины в качестве объясняющей переменной.
+
