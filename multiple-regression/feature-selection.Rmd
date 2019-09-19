@@ -790,75 +790,77 @@ The intercept has now a meaningful interpretation: **A typical automobile would 
 
 
 
-# Диагностика остатков модели
+# Residual Diagnostics
 
-Как и в случае линейной регрессии, модель множественной регрессии основана на ряде допущений о свойствах случайного компонента модели, т.е. остатков. См. [первую часть](mlr-modeling.Rmd) лекции.
+For multiple regression, the residual diagnostics is used to check if the assumptions of the model are met, and if the model can be improved by incorporating some remaining relationships between residuals and predictors.
 
-Для диагностики остатков множественной регрессии можно воспользоваться теми же инструментами, что и для линейной регрессии.
+## Residuals from the baseline model
 
-## Остатки исходной модели
-
-```{r Остатки исходной модели множественной регресии}
+```{r Plotting residuals from the baseline model}
 autoplot(m_stepwise_BIC)
 ```
 
-На графике остатков в зависимости от предсказанных значений можно видеть небольшое искривление, которое является следствием нелинейности зависимости. Поэтому можно рассмотреть вопрос о необходимости преобразования целевой переменной, или включения в модель нелинейных членов. Отклонения от нормальности заметны только в хвостах наблюдений, но число таких наблюдений невелико. Рост дисперсии при увеличении целевой переменной не наблюдается.
+The Residuals vs Fitted plot reveals a slight curvature, that comes from the non-linearity in the true relationship. Based on this, we can try to incorporate such non-linearity into the model by either transforming the variables, or by including polynomial terms. The deviation from normality is evident only at the tails of the distribution, as shown on the Q-Q plot. The hederoscedasticity is not visible.
 
-## Выбросы и влиятельные наблюдения{#residuals_stepwise}
-Рассмотрим выбросы и влиятельные наблюдения более подробно.
 
-```{r Выбросы и влиятельные наблюдения}
+## Outliers and influential observations {#residuals_stepwise}
+
+Let's explore the outliers and the influential observations in more detail. For this, we construct a plot showing both the residuals, and the two metrics for assessment of the observation's influence on the model - Cook's D and Leverage.
+
+
+```{r Outliers and influential observations}
 fit_stepwise_BIC <- m_stepwise_BIC %>% 
-  fortify() %>% # сохранили остатки, предсказания и показатели влиятельности в набор
-  merge(., cars) # добавили исходные данные (merge удаляет дублирующиеся при слиянии столбцы)
+  fortify() %>% # saved residuals, fitted values and influence statistics from the model to the data table
+  merge(., cars) # added the original columns
+
 
 ggplot(fit_stepwise_BIC, aes(.fitted, mpg)) +
-  geom_point(aes(size = .cooksd, colour = .hat)) +
+  geom_point(aes(size = .hat, colour = .cooksd)) +
   geom_line(aes(.fitted, .fitted), 
             colour = "red", linetype = "dashed") +
   scale_colour_gradient(low = "black", high = "red") +
   ggrepel::geom_label_repel(
     data = filter(fit_stepwise_BIC, .cooksd > 4/nrow(cars)),
     mapping = aes(label = model), alpha = 0.25) +
-  labs(title = "Влиятельные наблюдения",
-       x = "Прогноз mpg", y = "Факт mpg", 
-       colour = "Леверидж", size = "Расстояние Кука")
+  labs(title = "Influential observations",
+       x = "Predicted mpg", y = "Actual mpg", 
+       size = "Leverage", colour = "Cook's D")
  
 ```
 
-```{r Зависимость остатков от предсказанных значений}
+```{r Residuals vs fitted values plot}
 
 ggplot(fit_stepwise_BIC, aes(.fitted, .resid)) +
-  geom_point(aes(size = .cooksd, colour = .hat)) +
+  geom_point(aes(size = .hat, colour = .cooksd)) +
   geom_hline(yintercept = 0,
             colour = "red", linetype = "dashed") +
   scale_colour_gradient(low = "black", high = "red") +
   ggrepel::geom_label_repel(
     data = filter(fit_stepwise_BIC, .cooksd > 4/nrow(cars)),
     mapping = aes(label = model), alpha = 0.25) +
-  labs(title = "Зависимость остатков от предсказанных значений",
-       x = "Прогноз mpg", y = "Остаток", 
-       colour = "Леверидж", size = "Расстояние Кука")
+  labs(title = "Residuals vs fitted values",
+       x = "Predicted mpg", y = "Residual", 
+       colour = "Cook's D", size = "Leverage")
  
 ```
 
 
-Наибольший остаток имеет модель [Chevrolet Metro](https://wiki.zr.ru/Chevrolet_Metro). Это самая маленькая и экономичная из американских машин. 
+The largest residual corresponds to [Chevrolet Metro](https://wiki.zr.ru/Chevrolet_Metro). This is the smallest and the most economical model among american cars. 
 
 
-## Нелинейное преобразование целевой переменной
+## Non-linear transformation of the outcome variable
 
-Один из способов устранения нелинейности - степенное преобразование целевой переменной. Подходящую степень преобразования можно определить с помощью функции `car::powerTransform()`. Эта функция использует в качестве критерия выбора степень близости распределения остатков модели после преобразования к нормальному распределению.
+One way of accounting for the non-linearity of the relationship is using the power transformation of the outcome variable. We can estimate the required parameter of the power transformation using the `car::powerTransform()` function. This function searches for the beset transformation power aiming at making the distribution of the residuals as normal as possible.
 
-```{r Определение степени преобразования}
+```{r Determining the required power transform parameter}
 powerTransform(m_stepwise_BIC)
 ```
 
-Полученную степень лучше округлить. Значение довольно близко к нулю, который соответствует использованию логарифмического преобразования.
+The transform parameter is best rounded to make the resulting model more interpretable. The value we've obtained is quite close to 0, which corresponds to the log-transformation.
 
-Попробуем оценить модель с преобразованной целевой переменной.
+Now we try to estimate a model with the transformed outcome variable.
 
-```{r Подгонка модели с логарифмом}
+```{r Fitting the logarithmic model}
 
 m_log <- lm(log10(mpg)  ~ curb_wgt + fuel_cap + type + horsepow, data = cars)
 
@@ -868,33 +870,42 @@ tidy(m_log) %>% mutate_if(is.numeric, round, digits = 3)
 
 
 
-```{r Остатки модели с логарифмом}
+```{r Residuals from the logarithmic model}
 autoplot(m_log)
 ```
 
-Ситуация улучшилась незначительно. Появилось искривление на графике для оценки гетероскедастичности. В данном случае предпочтение стоит отдать более простой модели без логарифма.
+In this case, the transformation didn't help to remove non-linearity in residuals. Also we can see a side-effect of it on the `Scale-Location` plot: the variance of residuals is now not constant. Based on this, we discard the logarithmic model in favor of the simpler linear one.
 
-## Добавление нелинейных предикторов в модель
+## Adding non-linear predictors
 
-Для выявления нелинейных зависимостей от объясняющих переменных и пропущенных предикторов можно применять метод графического анализа остатков, строя диаграммы рассеяния для остатков в зависимости от других переменных в наборе данных.
+When looking for the possible improvements for the model, it's very useful to look at correlations between residuals and the predictors.
 
-```{r Зависимость остатков исходной модели, fig.height=7}
+```{r Residuals of the baseline model vs predictors, fig.height=7}
 fit_cars_stepwise <- cars %>% 
   add_residuals(m_stepwise_BIC) %>%
-  gather(key = "Переменная", value = "Значение", price:fuel_cap)
+  gather(key = "Variable", value = "Value", price:fuel_cap)
 
-ggplot(fit_cars_stepwise, aes(x = `Значение`, y = `resid`)) +
+ggplot(fit_cars_stepwise, aes(x = `Value`, y = `resid`)) +
   geom_point() + 
   geom_smooth(se = F) +
-  facet_wrap(~ `Переменная`, scales = "free_x", ncol = 2) +
-  labs(title = "Остатки исходной модели в зависимости от других переменных",
-       y = "Остаток", x = NULL)
+  facet_wrap(~ `Variable`, scales = "free_x", ncol = 2) +
+  labs(title = "Residuals of the baseline model vs predictors",
+       y = "Residual", x = NULL)
+
+
 ```
 
-Выраженной зависимости остатков от не включенных в модель переменных не наблюдается (есть сомнения только насчет объема двигателя). Видна нелинейность зависимости пробега от веса. Поэтому можно попытаться включить в модель члены более высоких порядков для веса.
+Our model includes the following predictors:
 
+```{r}
+coef(m_stepwise_BIC)
+```
 
-```{r Подгонка модели со степенями веса}
+As we can see in the plot above, there's no visible correlation between the residuals and the omitted predictors (`price`, `length`, `wheelbas`, `width`, `engine_s`). We observe the non-linear pattern on the `curb_wgt` plot, which suggests to include the polynomial terms for `curb_wgt` into the model.
+
+In the next example we can play with different powers of `curb_wgt` variable included into the model. The model stopped to improve after adding the 4th power.
+
+```{r Fitting the polynomial model for weight}
 
 m_poly <- lm(mpg  ~ curb_wgt + I(curb_wgt^2) + I(curb_wgt^3) + I(curb_wgt^4) + 
             fuel_cap + type + horsepow,
@@ -905,79 +916,91 @@ mtable(m_stepwise_BIC, m_poly)
 
 ```
 
-Показатели немного улучшились, коэффициенты для веса и его степеней значимы.
+The $R^2$ has improved and all the polynomial terms are significant.
 
-Мы получили довольно сложную модель:
+Now we have a more complex model:
 
 $$ \widehat{mpg} = 301 - 284 curb\_wgt + 111 curb\_wgt^2 - 19.0 curb\_wgt^3 + 1.192 curb\_wgt^4 -\\
 - 0.240 fuel\_cap - 3.15 (type = Truck) - 0.023 horsepow $$
 
-Сравним остатки.
+Let's explore the residuals.
 
-```{r Остатки модели со степенями веса}
+```{r Diagnostic plots for the polynomial model}
 autoplot(m_poly)
 ```
 
-Ситуация улучшилась, нелинейность практически не заметна.
+This looks much better now, the non-linearity is not noticeable.
 
-## Остатки финальной модели
-Зависимость остатков новой модели от остальных переменных.
+## Checking for correlations with other predictors
 
-```{r Остатки полиномиальной модели в зависимости от остальных переменных, fig.height=7}
+```{r The residuals from the polynomial model vs predictors, fig.height=7}
 fit_cars_poly <- cars %>% 
   add_residuals(m_poly) %>%
-  gather(key = "Переменная", value = "Значение", price:fuel_cap)
+  gather(key = "Variable", value = "Value", price:fuel_cap)
 
-ggplot(fit_cars_poly, aes(x = `Значение`, y = `resid`)) +
+ggplot(fit_cars_poly, aes(x = `Value`, y = `resid`)) +
   geom_point() + 
-  geom_smooth(se = F) +
-  facet_wrap(~ `Переменная`, scales = "free_x", ncol = 2) +
-  labs(title = "Остатки полиномиальной модели в зависимости от других переменных",
-       y = "Остаток", x = NULL)
+  geom_smooth(aes(color = country), se = F, method = 'lm') +
+  facet_wrap(~ `Variable`, scales = "free_x", ncol = 2) +
+  labs(title = "Polynomial model residuals vs predictors",
+       y = "Residual", x = NULL)
 ```
 
-Зависимости остатков от других переменных исчезли. Таким образом информация, доступная в этом наборе данных, была использована полностью.
+There are no visible correlations with the quantitative predictors. 
+We've added also split by country of origin, which might suggest to try adding the country variable and its interaction with `horsepow` and `price`.
 
-В заключение сравним предсказания модели с фактом. 
 
-```{r Выбросы и влиятельные наблюдения полиномиальной модели}
+```{r}
+m_poly_country <- lm(mpg  ~ curb_wgt + I(curb_wgt^2) + I(curb_wgt^3) + I(curb_wgt^4) + 
+            fuel_cap + type + horsepow * country + price * country,
+             data = cars)
+
+mtable(m_stepwise_BIC, m_poly, m_poly_country)
+
+```
+
+None of the additional predictors are significant, so we'll keep the previous polynomial model
+
+
+Finally, let's compare the predicted and the actual values. 
+
+```{r Outliers and influential observations for the polynomial model}
 fit_cars_poly <- m_poly %>% 
-  fortify() %>% # сохранили остатки, предсказания и показатели влиятельности в набор
-  merge(., cars) # добавили исходные данные (merge удаляет дублирующиеся при слиянии столбцы)
+  fortify() %>% # saved the residuals, fitted values and influence statistics to a data frame
+  merge(., cars) # added original data
 
 ggplot(fit_cars_poly, aes(.fitted, mpg)) +
-  geom_point(aes(size = .cooksd, colour = .hat)) +
+  geom_point(aes(colour = .cooksd, size = .hat)) +
   geom_line(aes(.fitted, .fitted), 
             colour = "red", linetype = "dashed") +
   scale_colour_gradient(low = "black", high = "red") +
   ggrepel::geom_label_repel(
     data = filter(fit_cars_poly, .cooksd > 4/nrow(cars)),
     mapping = aes(label = model), alpha = 0.25) +
-  labs(title = "Влиятельные наблюдения",
-       x = "Прогноз mpg", y = "Факт mpg", 
-       colour = "Леверидж", size = "Расстояние Кука")
+  labs(title = "Influential observations",
+       x = "Predicted mpg", y = "Actual mpg", 
+       colour = "Cook's D", size = "Leverage")
  
 ```
 
-В сравнении с результатом для предыдущей модели (см. [Выбросы и влиятельные наблюдения](#residuals_stepwise)) искривление облака точек практически не заметно, точки симметрично расположены относительно прямой "идеального результата". Отклонения прогноза и факта существенно уменьшились. 
+Compared to the residuals from the previous model (see [Outliers and influential observations](#residuals_stepwise)), the curvature of the point cloud is not noticeable. The points are symmetrically distributed across the 'Perfect fit' line, the residuals are much smaller. 
 
 
-```{r Зависимость остатков полиномиальной модели от предсказанных значений}
+```{r Residuals vs fitted for the polynomial model}
 
 ggplot(fit_cars_poly, aes(.fitted, .resid)) +
-  geom_point(aes(size = .cooksd, colour = .hat)) +
+  geom_point(aes(size = .hat, colour = .cooksd)) +
   geom_hline(yintercept = 0,
             colour = "red", linetype = "dashed") +
   scale_colour_gradient(low = "black", high = "red") +
   ggrepel::geom_label_repel(
     data = filter(fit_cars_poly, .cooksd > 4/nrow(cars)),
     mapping = aes(label = model), alpha = 0.25) +
-  labs(title = "Зависимость остатков от предсказанных значений",
-       x = "Прогноз mpg", y = "Остаток", 
-       colour = "Леверидж", size = "Расстояние Кука")
+  labs(title = "Residuals vs Fitted, polynomial model",
+       x = "Predicted mpg", y = "Residual", 
+       colour = "Cook's D", size = "Leverage")
  
 ```
 
-
-Наибольшими остатками и расстоянием Кука выделяются два типа машин - экономичные машины (Chevrolet Metro, Hyundai Accent, Mitsubishi Mirage), крупные легковые автомобили (Dodge Ram Wagon, Cadillac Escalade, Lincoln Navigator, Honda Odyssey, Toyota RAV4, Jeep Wrangler) и спортивные машины (Dodge Viper, Plymouth Prowler). Возможно, в этой области имеется потенциал для улучшения модели путем включения типа машины в качестве объясняющей переменной.
+The largest Cook's D corresponds to economy cars(Chevrolet Metro, Hyundai Accent, Mitsubishi Mirage), large automobiles (Dodge Ram Wagon, Cadillac Escalade, Lincoln Navigator, Honda Odyssey, Toyota RAV4, Jeep Wrangler) and sport cars (Dodge Viper, Plymouth Prowler). We don't have a variable for a car class in our data, but it might be a good predictor for mpg, which could improve the model.
 
