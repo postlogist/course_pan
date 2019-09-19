@@ -1,0 +1,144 @@
+---
+title: "Dealing With Categorical Variables"
+author: "Zakhodyakin Gleb"
+date: "19 09 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r message=F, warning=F}
+library(tidyverse)
+library(lubridate)
+library(modelr)
+```
+
+
+This tutorial notebook shows how the categorical variables should be treated when building models.
+
+Let's try to model the retail turnover series in Russia. Data is taken from the [sophist database](http://sophist.hse.ru).
+The values are in bln Rub.
+
+
+```{r}
+retail <- read_csv2('datasets/retail.csv')
+str(retail)
+```
+
+By default, all columns containing numbers are loaded as numerical, quantitative variables.
+
+```{r}
+#adding date column
+retail <- retail %>% mutate(date = make_date(year, month, day = 1))
+
+ggplot(retail, aes(x = date, y = retail_turnover)) +
+  geom_line(color = 'red')
+```
+
+
+Let's try to model the time series using regression. We can clearly see, that the data is seasonal, so we include both `index` variable to model the trend and `month` variable to model seasonality.
+
+```{r}
+m1 <- lm(retail_turnover ~ index + month, data = retail)
+summary(m1)
+```
+
+Let's plot the fitted values.
+
+```{r}
+
+retail %>% add_predictions(m1) %>%
+  ggplot(aes(x = date)) +
+  geom_point(aes(y = retail_turnover)) +
+  geom_line(aes(y = pred), color = 'blue') +
+  labs(title = 'Forecast with month treated as a number')
+
+```
+
+The result looks very strange.
+
+The problem is, `month` was treated as a numerical variable. The estimated coefficient for month:
+
+```{r}
+coef(m1)
+```
+
+means, that for January (`month = 1`) we must add 46 to the trend, and for December (`month = 12`) we should add `r 46 * 12`. Thus, we are assuming, that sales in December must be 12 times larger than in January. This is clearly wrong.
+
+The correct way of dealing with `month` was to treat is as a categorical variable and to use a factor to correctly model it.
+
+
+```{r}
+retail <- 
+  retail %>% 
+  mutate(monthf = factor(month, labels = c('Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec')))
+
+```
+
+
+
+Now, we've added a factor variable with 12 levels:
+
+```{r}
+str(retail)
+```
+
+```{r}
+levels(retail$monthf)
+```
+
+
+Let's build a model using the new factor variable for months.
+
+```{r}
+m2 <- lm(retail_turnover ~ index + monthf, data = retail)
+
+summary(m2)
+```
+
+Now the model has 12 coefficients - one for index, and 12 - 1 = 11 - for months. The months are treated as separate categories, and the coefficient for a month shows its average difference from the baseline month, which is January (this was the first factor level).
+
+Let's compare the forecast from the second model:
+
+```{r}
+retail %>% add_predictions(m2) %>%
+  ggplot(aes(x = date)) +
+  geom_point(aes(y = retail_turnover)) +
+  geom_line(aes(y = pred), color = 'blue') +
+  labs(title = 'Forecast with month treated as a factor')
+```
+
+This looks much better.
+
+We could improve the model further, by transforming the output variable. The series shows multiplicative seasonality, but the contribution of each month is constant and the model is additive as a result.
+
+
+```{r}
+m3 <- 
+  retail %>%
+  mutate(log_retail_turnover = log(retail_turnover)) %>%
+  lm(log_retail_turnover ~ index + monthf, data = .)
+
+summary(m3)
+```
+
+
+To get predictions on the original scale, we must back-transform the predicted values:
+
+```{r}
+
+retail %>% 
+  add_predictions(m3, var = 'log_pred') %>%
+  mutate(pred = exp(log_pred)) %>%
+  ggplot(aes(x = date)) +
+  geom_point(aes(y = retail_turnover)) +
+  geom_line(aes(y = pred), color = 'blue') +
+  labs(title = 'Forecast with month treated as a factor and log-transformation')
+```
+
+Note how December peaks have now different height. Our model can capture now the multiplicative character of the retail sales.
+
+
