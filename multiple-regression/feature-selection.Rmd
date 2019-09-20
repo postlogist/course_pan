@@ -353,10 +353,10 @@ Despite best subsets regression can select the best possible model for a given n
 
 ## Stepwise regression
 
-**Stepwise regression** is a heuristic algorithm for variable selection. It is used when a number of predictors is large and best subsets regression is infeasible. The stepwise algorithm works iteratively. At each step, a selection of best variable to include or exclude is made. There are 3 variations of the algorithm:
+**Stepwise regression** is a heuristic algorithm for variable selection. It is used when a number of predictors is large and best subsets regression is infeasible. The stepwise algorithm works iteratively. At each step, a selection of the best variable to include or exclude is made. There are 3 variations of the algorithm:
 
 - **Backward stepwise** - an approach, where a large model is iteratively simplified by removing the weakest predictors;
-- **Forward stepwise** - an approach, where variables are iteratively added to a simple model, until it's quality is improving;
+- **Forward stepwise** - an approach, where variables are iteratively added to a simple model, until its quality is improving;
 - **Stepwise stepwise** - an approach, where at each step a variable can be added, while another variable can be also removed from the model.
 
 
@@ -402,14 +402,17 @@ m_forward <- stepAIC(m_null,
 ### Stepwise stepwise
 
 ```{r Stepwise Stepwise}
+
 m_stepwise <- stepAIC(m_null, 
                       scope = list(lower = m_null, upper = m_full), 
                       direction = 'both')
+
 ```
 
 For comparison, we'll use BIC for model selection using the stepwise stepwise algorithm
 
 ```{r Stepwise Stepwise c BIC}
+
 m_stepwise_BIC <- stepAIC(m_null, 
                       scope = list(lower = m_null, upper = m_full), 
                       direction = 'both',
@@ -435,7 +438,7 @@ memisc::mtable(m_backward, m_forward, m_stepwise, m_stepwise_BIC, m_best)
 
 **Limitations of the method**
 
-In our example, all three stepwise regression algorithms produced the same result (using AIC). When the selected metric was changed to BIC, a simpler model was produced. This model appeared to be the same, as proposed by the best subsets regression (also using BIC). In general, this may not be the case, since all stepwise algorithms are **greedy**.  A **greedy algorithm** makes the locally optimal decision at each step (selecting a variable with largest improvement in the metric in case of stepwise regression). But this approach doesn't guarrantee convergence to the best possible model.
+In our example, all three stepwise regression algorithms produced the same result (using AIC). When the selected metric was changed to BIC, a simpler model was produced. This model appeared to be the same, as proposed by the best subsets regression (also using BIC). In general, this may not be the case, since all stepwise algorithms are **greedy**.  A **greedy algorithm** makes the locally optimal decision at each step (selecting a variable with largest improvement in the metric in case of stepwise regression). But this approach doesn't guarantee convergence to the best possible model.
 
 Also, as with the best subsets regression, the analyst is responsible for modeling non-linear relationships and interactions. The variable selection methods are unable to consider them automatically.
 
@@ -515,7 +518,7 @@ By default, `glmnet()` standardizes the coefficients, to make the penalty term s
 
 
 # Best lambda
-cat("The minimal error is obtained with lamda =", cv_ridge$lambda.min, "\n\n")
+cat("The minimal error is obtained with lambda =", cv_ridge$lambda.min, "\n\n")
 
 
 # Best model coefficients (according to test set error)
@@ -569,6 +572,7 @@ pred <- predict(cv_ridge, newx = new_car, s = c(0, cv_ridge$lambda.min))
 # Printing the output
 colnames(pred) <- c("Without Regularization", "With Regularization")
 pred
+
 ```
 
 In this example, the results are identical, since the coefficients haven't changed much by regularization.
@@ -599,9 +603,7 @@ Notice how the coefficients are shrinking towards zero with increased $\lambda$.
 ```{r Lasso regression - best model coefficients}
 
 # Best lambda
-cat("The minimal error is obtained with lamda =", cv_lasso$lambda.min, "\n\n")
-
-
+cat("The minimal error is obtained with lambda =", cv_lasso$lambda.min, "\n\n")
 
 # Best model coefficients
 coef(cv_lasso, s = c(0, cv_lasso$lambda.min))
