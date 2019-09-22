@@ -1,0 +1,681 @@
+---
+title: "Classification with Decision Trees"
+author: "Gleb Zakhodyakin"
+date: '21.09.2019'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+options(digits = 2)
+```
+
+# Preparation
+
+## Loading the packages
+
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse) # Data transformation and visualization
+library(scales) # Enables percentage scale for ggplot graphs
+library(rpart) # Decision Trees: the CART algorithm
+library(C50) # Another implementation of decision trees in R: C5.0
+library(party) # Another tree-based algorithm: conditional inference trees
+library(rpart.plot) # Nice visualization of rpart Decision Trees
+library(partykit) # Visualization of Conditional Inference and C5.0 Trees
+library(mlr) # MAchine learning framework for R. Here we are using model accuracy metrics provided by the package.
+
+```
+
+## Data Preparation
+
+```{r Loading data, train/test split}
+d <- readRDS("turnover.RDS")
+
+# Creating training and test samples
+set.seed(1234)
+train_indices <-  sample(1:nrow(d), size = 2000)
+d_train <- d[train_indices, ]
+d_test <- d[-train_indices, ]
+
+# What's inside the training sample
+glimpse(d_train)
+```
+
+# Modeling using CART algorithm
+
+## A tree for two quantitative predictors
+
+```{r Employee turnover based on satisfaction level and performance score}
+
+cmap <- c("stayed" = "green", "left" = "red")
+
+ggplot(d, aes(x = satisfaction_level, y = last_evaluation)) +
+  geom_jitter(aes(colour = left), alpha = 0.5) +
+  labs(title = "Employee's decision to quit, job satisfaction and performance", colour = "Decision") +
+  scale_x_continuous(breaks = 1:10) +
+  scale_colour_manual(values = cmap)
+```
+
+
+```{r Decision tree for job satisfaction and perfomance}
+m_rpart2 <- rpart(left ~ satisfaction_level + last_evaluation,
+                 data = d_train)
+rpart.plot(m_rpart2, tweak = 1.5,
+           main = "Decision tree for satisfaction and evaluation")
+```
+
+```{r Text-based representation of the tree}
+print(m_rpart2)
+```
+
+
+### Plotting the decision boundaryx
+
+Since we have just two quantitative predictors, we can visualize the decision boundary.
+
+```{r Data grid for plotting the decision boundary}
+
+# Creating a data grid from 0 to 10 with 0.1 step size 
+gr <- expand.grid(satisfaction_level = seq(0, 10, by = 0.1),
+             last_evaluation = seq(3, 10, by = 0.1))
+```
+
+
+```{r Predicting the turnover probability and class label for each point in the grid }
+
+# Adding the predicted class labels and turnover probability
+boundary_rpart2 <- gr %>%
+  mutate(prob = predict(m_rpart2, newdata = gr, type = "prob")[,'left'],
+         class = predict(m_rpart2, newdata = gr, type = "class"))
+
+```
+
+
+```{r Decision boundary for 2 quantitative predictors for rpart}
+ggplot(boundary_rpart2, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = prob)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_colour_manual(values = cmap) +
+  scale_fill_gradient(low = "grey80", high = "grey20")
+
+```
+
+```{r Decision boundary for 2 quantitative predictors and rpart - the class labels}
+ggplot(boundary_rpart2, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = class)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_fill_grey(start = 0.8, end = 0.2) +
+  scale_colour_manual(values = cmap)
+```
+
+
+### Comparing the split evaluation criteria
+
+```{r Growing the tree using Gini index}
+m_rpart2_gini <- rpart(left ~ satisfaction_level + last_evaluation , 
+                         data = d_train, 
+                         parms = list(split = "gini"))
+rpart.plot(m_rpart2_gini, tweak = 1.25,
+           main = "Decision tree based on Gini index")
+```
+
+```{r Growing the tree using information entropy}
+m_rpart2_information <- rpart(left ~ satisfaction_level + last_evaluation, 
+                         data = d_train, 
+                         parms = list(split = "information"))
+rpart.plot(m_rpart2_information, tweak = 1.25,
+           main = "Decision tree based on Information Entropy")
+```
+
+### Model accuracy
+
+The **Confusion Matrix** cross-tabulates the predicted and the actual class labels.
+
+To create the confusion matrix, we add predicted class labels and use the `table()` function to cross-tabulate them against the actual class labels.
+
+
+```{r Confusion matrix for rpart tree with 2 predictors}
+
+# Predicted class labels
+pr_rpart2_train <- predict(m_rpart2, newdata = d_train, type = "class")
+
+# Confusion matrix
+table_rpart2_train <- table(predicted = pr_rpart2_train, actual = d_train$left)
+table_rpart2_train
+```
+
+Let's calculate some model performance metrics on the training data:
+
+```{r Manual calculation of the accuracy}
+options(digits = 3)
+# Accuracy
+100 * (table_rpart2_train["stayed", "stayed"] + 
+         table_rpart2_train["left", "left"]) / sum(table_rpart2_train)
+
+```
+
+```{r Manual calculation of mean misclassification error}
+# Mean Misclassification Error
+100 * (table_rpart2_train["stayed", "left"] + 
+         table_rpart2_train["left", "stayed"]) / sum(table_rpart2_train)
+
+```
+
+
+The above metrics can be readily calculated with the model metrics provided by the `mlr` package:
+
+```{r Computing accuracy using mlr - training sample}
+# Accuracy
+measureACC(pr_rpart2_train, d_train$left) * 100
+```
+
+```{r Computing MMCE using mlr - training sample}
+# Mean misclassification error
+measureMMCE(pr_rpart2_train, d_train$left) * 100
+```
+
+Let's compare the accuracy on the test sample
+
+```{r Computing accuracy using mlr - test sample}
+
+pr_rpart2_test <- predict(m_rpart2, newdata = d_test, type = "class")
+measureACC(pr_rpart2_test, d_test$left) * 100
+
+```
+
+```{r}
+table(predicted = pr_rpart2_test, actual = d_test$left)
+```
+
+The accuracy is very similar to the accuracy on the training sample. This is good, our model didn't overfit the training data.
+
+
+## Setting the algorithm's parameters
+
+Decision trees are prone to overfitting the training data. It is technically possible to grow a very large tree, that classifies the training data perfectly. However the rules added to the tree will capture not only the true relationships in the data, but also the noise. Such a tree would be unnecessarily complex, and won't achieve good accuracy on the new data.
+
+The implementation of the tree growing algorithm of R has reasonable defaults that prevent overfitting. To illustrate the point of overfitting, we'll change the parameters of the algorithm, to relax the early stopping and the tree pruning rules.
+
+
+```{r Growing the overfit tree, dev="svg"}
+
+m_rpart2_overfit <- rpart(left ~ satisfaction_level + last_evaluation, 
+                          data = d_train,
+                          control = 
+                            rpart.control(
+                              minsplit = 2, # Minimum node size for splitting
+                              cp = 0.00001, # minimum relative improvement for splitting
+                              maxdepth = 20 # maximum depth of a leaf node
+                            ))
+
+rpart.plot(m_rpart2_overfit)
+
+```
+
+
+### The decision boundary for an overfit tree
+
+```{r The decision boundary for an overfit tree }
+
+# Adding predicted class labels and turnover probabilities
+boundary_rpart2_overfit <- gr %>%
+  mutate(prob = predict(m_rpart2_overfit, newdata = gr, type = "prob")[,'left'],
+         class = predict(m_rpart2_overfit, newdata = gr, type = "class"))
+
+# The decision boundary
+ggplot(boundary_rpart2_overfit, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = prob)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_colour_manual(values = cmap) +
+  scale_fill_gradient(low = "grey80", high = "grey20")
+
+```
+
+### Comparing the performance of the overfit model on training and test samples
+
+```{r Prediction from the overfit model}
+
+pr_rpart2_overfit_train <- predict(m_rpart2_overfit, newdata = d_train, type = "class")
+pr_rpart2_overfit_test <- predict(m_rpart2_overfit, newdata = d_test, type = "class")
+
+```
+
+
+The confusion matrix and accuracy on the training data
+
+```{r}
+table(predicted = pr_rpart2_overfit_train, actual = d_train$left)
+
+```
+
+```{r}
+measureACC(pr_rpart2_overfit_train, d_train$left) * 100
+
+```
+
+The confusion matrix and accuracy on the test data
+
+
+```{r}
+table(predicted = pr_rpart2_overfit_test, actual = d_test$left)
+```
+
+```{r}
+measureACC(pr_rpart2_overfit_test, d_test$left) * 100
+
+```
+
+## Tree pruning
+
+Plotting model error vs complexity parameter (cp)
+
+```{r}
+
+plotcp(m_rpart2_overfit)
+```
+
+Tree pruning
+
+```{r}
+m_rpart2_pruned <- prune(m_rpart2_overfit, cp = 0.005)
+rpart.plot(m_rpart2_pruned)
+```
+
+### The accuracy after pruning
+
+```{r Prediction from the pruned tree}
+
+pr_rpart2_pruned_train <- predict(m_rpart2_pruned, newdata = d_train, type = "class")
+pr_rpart2_pruned_test <- predict(m_rpart2_pruned, newdata = d_test, type = "class")
+
+```
+
+
+Confusion matrix and accuracy for the pruned tree - training sample
+
+```{r}
+table(predicted = pr_rpart2_pruned_train, actual = d_train$left)
+
+```
+
+```{r}
+measureACC(pr_rpart2_pruned_train, d_train$left) * 100
+
+```
+
+Confusion matrix and accuracy for the pruned tree - test sample
+
+```{r}
+table(predicted = pr_rpart2_pruned_test, actual = d_test$left)
+```
+
+```{r}
+measureACC(pr_rpart2_pruned_test, d_test$left) * 100
+
+```
+
+After pruning, the drop in accuracy on the test sample is much smaller.
+
+
+### The decision boundary for the pruned tree
+
+```{r The decision boundary for the pruned tree }
+
+# Adding the predicted class labels and turnover probabilities
+boundary_rpart2_pruned <- gr %>%
+  mutate(prob = predict(m_rpart2_pruned, newdata = gr, type = "prob")[,'left'],
+         class = predict(m_rpart2_pruned, newdata = gr, type = "class"))
+
+# Plotting the decision boundary
+ggplot(boundary_rpart2_pruned, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = prob)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_colour_manual(values = cmap) +
+  scale_fill_gradient(low = "grey80", high = "grey20")
+
+```
+
+
+# Growing the conditional inference tree (party)
+
+Another decision tree algorithm available in R is Conditional Inference Tree. This algorithm is implemented by the `party` package.
+
+```{r Growing the ctree for two predictors, fig.width=9, fig.height=7}
+m_ctree2 <- ctree(left ~ satisfaction_level + last_evaluation, data = d_train)
+plot(m_ctree2)
+
+```
+
+## The decision boundary for ctree with 2 predictors
+
+```{r The decision boundary for ctree }
+
+# Adding predicted class labels and turnover probability
+boundary_ctree2 <- gr %>%
+  mutate(prob = predict(m_ctree2, newdata = gr, type = "prob")[,'left'],
+         class = predict(m_ctree2, newdata = gr, type = "response"))
+
+# Plotting the decision boundary
+ggplot(boundary_ctree2, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = prob)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_colour_manual(values = cmap) +
+  scale_fill_gradient(low = "grey80", high = "grey20")
+
+```
+
+## The accuracy for ctree
+
+```{r Adding predictions from ctree}
+pr_ctree2_test <- predict(m_ctree2, newdata = d_test, type = "response")
+```
+
+The confusion matrix and accuracy for ctree - test sample
+
+```{r}
+table(predicted = pr_ctree2_test, actual = d_test$left)
+```
+
+```{r}
+measureACC(pr_ctree2_test, d_test$left) * 100
+
+```
+
+
+
+# Modeling using C5.0
+
+The C5.0 algorithm by Ross Quinlan is a very popular decision tree algorithm, that is implemented in many commercial data mining packages. Recently the source code for this algorithm has been published by the author under an open license, so the algorithm is now available in R.
+
+```{r Growinth the c50 tree for two predictors, fig.width=12, fig.height=7}
+m_c50 <- C5.0(left ~ satisfaction_level + last_evaluation, data = d_train)
+plot(m_c50)
+
+```
+
+## The decision boundary for a  C5.0 tree
+
+```{r Decision boundary for c50 }
+
+# Adding predicted class labels and turnover probabilities
+boundary_c50 <- gr %>%
+  mutate(prob = predict(m_c50, newdata = gr, type = "prob")[,'left'],
+         class = predict(m_c50, newdata = gr, type = "class"))
+
+# Plotting the decision boundary
+ggplot(boundary_c50, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = prob)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_colour_manual(values = cmap) +
+  scale_fill_gradient(low = "grey80", high = "grey20")
+
+```
+
+## The accuracy of C5.0 tree
+
+```{r Predictions from c50 tree}
+pr_c50_test <- predict(m_c50, newdata = d_test, type = "class")
+```
+
+The confusion matrix and accuracy for C5.0 tree - test sample
+
+```{r}
+table(predicted = pr_c50_test, actual = d_test$left)
+```
+
+```{r}
+measureACC(pr_c50_test, d_test$left) * 100
+
+```
+
+In this example, the performance is very close to the rpart.
+
+## Trying to improve performance using boosting
+
+The accuracy can be improved by combining the predictions from the ensemble of several models. The C5.0 packages implements one such approach, that is called adaptive boosting. This algorithm grows a sequence of trees, that are trained to correct the errors from the previously built trees. After the ensemble is built, the prediction is made by all the trees in it, and the class label is determined by voting.
+
+The `trials` parameter controls the number of additional trees to include in the ensemble. This is the maximal number of trees, the actual number can be smaller, when additional trees are proved not to improve performance.
+
+
+```{r}
+m_c50_boost <- C5.0(left ~ satisfaction_level + last_evaluation, 
+                    data = d_train, trials = 5)
+m_c50_boost
+```
+
+## Plotting the decision boundary for the ensemble of C5.0 trees with boosting
+
+```{r Decision boundary for c50 boosted trees}
+
+# Adding predicted class labels and turnover probability
+boundary_c50_boost <- gr %>%
+  mutate(prob = predict(m_c50_boost, newdata = gr, type = "prob")[,'left'],
+         class = predict(m_c50_boost, newdata = gr, type = "class"))
+
+# The decision boundary
+ggplot(boundary_c50_boost, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = prob)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_colour_manual(values = cmap) +
+  scale_fill_gradient(low = "grey80", high = "grey20")
+
+```
+
+
+## The performance of C5.0 boosted tree ensemble
+
+```{r Adding predictions from the boosted c5.0 ensemble}
+pr_c50_boost_test <- predict(m_c50_boost, newdata = d_test, type = "class")
+
+```
+
+The confusion matrix and accuracy for the boosted c5.0 ensemble - test data
+
+```{r}
+table(predicted = pr_c50_boost_test, actual = d_test$left)
+```
+
+```{r}
+measureACC(pr_c50_boost_test, d_test$left) * 100
+```
+
+The accuracy didn't improve.
+
+
+## Cost-sensitive classification
+
+In many cases the negative consequences for different kinds of classification error are not equal. For example, when a fraud detection model misses one fraudulent transaction, the loss is significantly higher compared to the 'false alarm' error.
+
+Similarly, when the model looks for customers who can be interested in a product or service, the loss of missing a potential customer is higher compared to the cost of making an additional call or sending an email.
+
+To take into account the misclassification cost, some alrgorithms allow to specify different cost for different kinds of the misclassification error.
+
+In our case we will specify 5 times higher cost for 'missed opportunity' type error: it's more important to determine if an employee is considering leaving the company, and to try to prevent the loss of a valuable employee.
+
+```{r Creating the cost matrix}
+
+cost_matrix <- matrix(c(0, 5, 1, 0 ), ncol = 2, byrow = TRUE,
+                      dimnames = list("predicted" = c("stayed", "left"),
+                                      "actual" = c("stayed", "left")))
+cost_matrix
+```
+
+Creating the cost-sensitive classifier
+
+```{r, fig.width=12, fig.height=7}
+m_c50_cost <- C5.0(left ~ satisfaction_level + last_evaluation, 
+                   data = d_train, cost = cost_matrix)
+plot(m_c50_cost)
+
+```
+
+## The decision boundary for the cost sensitive C5.0 classifier
+
+```{r The decision boundary for the cost sensitive C5.0 classifier }
+
+# Adding the class labels
+boundary_c50_cost <- gr %>%
+  mutate(class = predict(m_c50_cost, newdata = gr, type = "class"))
+
+# Plotting the decision boundary
+ggplot(boundary_c50_cost, aes(satisfaction_level, last_evaluation)) +
+  geom_raster(aes(fill = class)) +
+  geom_jitter(aes(x = satisfaction_level, 
+                  y = last_evaluation, 
+                  colour = left), 
+              data = d_train) +
+  scale_colour_manual(values = cmap) +
+  scale_fill_manual(values = c("grey80","grey20"))
+```
+
+
+## The accuracy of the cost-sensitive C5.0 model
+
+```{r Adding predictions from the cost-sensitive c.50 classifier}
+pr_c50_cost_test <- predict(m_c50_cost, newdata = d_test, type = "class")
+```
+
+The confusion matrix and the accuracy for the cost-sensitive c5.0 classifier - test sample:
+
+```{r}
+table(predicted = pr_c50_cost_test, actual = d_test$left)
+```
+
+```{r}
+measureACC(pr_c50_cost_test, d_test$left) * 100
+```
+
+# An alternative method for visualizing rpart trees
+
+For small trees, the visualization used by the party package for ctree-produced trees is more concise.
+
+The trees created by rpart can be also visualized this way. To do so, use the partykit::as.party() function.
+
+```{r}
+rpart.plot(m_rpart2, main = "Default visualization for rpart tree")
+```
+
+```{r, fig.width=12, fig.height=7}
+plot(as.party(m_rpart2), main = "rpart tree visualized by party")
+```
+
+
+
+### Comparing the performance of models using all the predictors
+
+#### rpart
+
+```{r}
+
+m_rpart_all <- rpart(left ~ ., data = d)
+rpart.plot(m_rpart_all)
+
+```
+
+Confusion matrix for rpart - test sample
+
+```{r}
+
+pr_rpart_all_test <- predict(m_rpart_all, newdata = d_test, type = "class")
+table(predicted = pr_rpart_all_test, actual = d_test$left)
+```
+
+Accuracy for rpart - test sample
+
+```{r}
+measureACC(pr_rpart_all_test, d_test$left) * 100
+```
+
+#### ctree
+
+```{r, fig.width=20, fig.height=9}
+
+m_ctree_all <- ctree(left ~ ., data = d)
+plot(m_ctree_all)
+
+```
+
+Confusion matrix for ctree - test sample
+
+```{r}
+
+pr_ctree_all_test <- predict(m_ctree_all, newdata = d_test, type = "response")
+table(predicted = pr_ctree_all_test, actual = d_test$left)
+```
+
+Accuracy for ctree - test sample
+
+```{r}
+measureACC(pr_ctree_all_test, d_test$left) * 100
+```
+
+
+
+
+#### C5.0
+
+```{r, fig.width=20, fig.height=9}
+
+m_c50_all <- C5.0(left ~ ., data = d)
+plot(m_c50_all)
+
+```
+
+Confusion matrix for c5.0 - test sample
+
+```{r}
+pr_c50_all_test <- predict(m_c50_all, newdata = d_test, type = "class")
+table(predicted = pr_c50_all_test, actual = d_test$left)
+```
+
+Accuracy for C5.0 - test sample
+
+```{r}
+measureACC(pr_c50_all_test, d_test$left) * 100
+```
+
+
+
+
+#### C5.0 with boosting
+
+```{r}
+m_c50_boost_all <- C5.0(left ~ ., data = d, trials = 100)
+m_c50_boost_all
+```
+
+Confusion matrix for boosted c5.0 - test sample
+
+```{r}
+pr_c50_boost_all_test <- predict(m_c50_boost_all, newdata = d_test, type = "class")
+table(predicted = pr_c50_boost_all_test, actual = d_test$left)
+```
+
+Accuracy for boosted C5.0 - test sample
+
+```{r}
+measureACC(pr_c50_boost_all_test, d_test$left) * 100
+```
+
+
