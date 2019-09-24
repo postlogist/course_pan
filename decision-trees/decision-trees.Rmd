@@ -285,9 +285,11 @@ plotcp(m_rpart2_overfit)
 
 Tree pruning
 
-```{r}
+```{r dev="svg", fig.width=12, fig.height=7}
+
 m_rpart2_pruned <- prune(m_rpart2_overfit, cp = 0.005)
-rpart.plot(m_rpart2_pruned)
+rpart.plot(m_rpart2_pruned, cex = 0.9)
+
 ```
 
 ### The accuracy after pruning
@@ -352,7 +354,7 @@ ggplot(boundary_rpart2_pruned, aes(satisfaction_level, last_evaluation)) +
 
 Another decision tree algorithm available in R is Conditional Inference Tree. This algorithm is implemented by the `party` package.
 
-```{r Growing the ctree for two predictors, fig.width=9, fig.height=7}
+```{r Growing the ctree for two predictors, fig.width=9, fig.height=6}
 m_ctree2 <- ctree(left ~ satisfaction_level + last_evaluation, data = d_train)
 plot(m_ctree2)
 
@@ -586,10 +588,10 @@ plot(as.party(m_rpart2), main = "rpart tree visualized by party")
 
 #### rpart
 
-```{r}
+```{r fig.height=7, fig.width=9}
 
 m_rpart_all <- rpart(left ~ ., data = d)
-rpart.plot(m_rpart_all)
+rpart.plot(m_rpart_all, cex = 1)
 
 ```
 
@@ -609,11 +611,10 @@ measureACC(pr_rpart_all_test, d_test$left) * 100
 
 #### ctree
 
-```{r, fig.width=20, fig.height=9}
+```{r, fig.width=20, fig.height=10, dev="svg"}
 
 m_ctree_all <- ctree(left ~ ., data = d)
 plot(m_ctree_all)
-
 ```
 
 Confusion matrix for ctree - test sample
@@ -635,7 +636,7 @@ measureACC(pr_ctree_all_test, d_test$left) * 100
 
 #### C5.0
 
-```{r, fig.width=20, fig.height=9}
+```{r, fig.width=20, fig.height=9, dev="svg"}
 
 m_c50_all <- C5.0(left ~ ., data = d)
 plot(m_c50_all)
