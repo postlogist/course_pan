@@ -335,7 +335,7 @@ d_test <- d[-train_ind, ] # Test sample
 
 ## Logistic Regression with gender and class only
 
-As a first step, we'll build a logistic regression model using the two most important predictors - the gender and the class of a passenger. We'll also include the interaction of these two factors, as we've seen the different effect of gender for different classes:
+As a first step, we build a logistic regression model using the two most important predictors - the gender and the class of a passenger. We also include the interaction of these two factors, as we've seen the different effect of gender for different classes:
 
 ```{r}
 m_lr_sexclass <- glm(survived ~ pclass + sex + pclass : sex, 
@@ -347,37 +347,51 @@ summary(m_lr_sexclass)
 ### Interpreting the coefficients
 
 
-Коэффициенты в модели логистической регрессии - это изменение логита, т.е. логарифма шансов при единичном изменении предиктора. В нашей модели все предикторы - это фиктивные переменные, поэтому коэффициенты регрессии показывают отличия в шансах на выживание для соответствующих групп.
+A slope coefficient in a logistic regression model shows the change in logit, i.e. the log-odds for unit change of the predictor. In our model all predictors are dummy variables, so the coefficients show the difference for the corresponding groups of passengers.
 
-Т.к. мы включили пол и класс в модель, коэффициенты позволяют сравнить шансы пассажиров одного и того же пола в разных классах. Или сравнить шансы женщин и мужчин, следовавших одним классом.
+Since we've included gender, class and the interaction of the two into the model, now we can compare the survival probability for two passengers of the same gender travelling in the two classes. We can also compare the survival chances of a man and a woman travelling in the same class.
 
-Базовой категорией по классу является первый класс. Во втором классе шансы выжить ниже (однако отличие статистически не значимо). В третьем - существенно ниже.
+Our baseline category in terms of class is the 1st class passenger. A 2nd class passenger has less chances to survive. A 3rd class passenger has even lower chances to survive. Both differences are statistically significant.
 
-Базовой категорией по полу является женщина. Для мужчин шансы выжить существенно ниже.
+Our baseline category in terms of gender is a woman. The model shows, that a male would have a significantly lower chance to survive.
 
-Однако, ситуация неодинакова в различных классах. Например, если расмотреть 2 класс, то шансы на выживание мужчин в нем незначительно ниже, а в третьем классе - существенно выше, чем для мужчин в первом классе.
+This situation is different for different classes. For example, among the 2nd class passengers the survival chances for men and women are less different. This is even more true for the 1st class passengers.
 
-В качестве примера, рассчитаем прогозы.
+Let's calculate predictions for a few cases using our model:
 
- - Шансы выжить для женщины из 1 класса: $O = \exp(2.955) = 19.2$  
- Это соответствует вероятности выживания: $P = 19.2 / (19.2 + 1) = 0.95$
 
- - Шансы выжить для мужчины из 1 класса: $O = \exp(2.955 - 3.409) = 0.635$   
- Вероятность выжить: $P = 0.635 / 1.635 = 0.388$
+ - Survival odds for a woman travelling 1st class: $O = \exp(3.517) = 33.7$  
+ This corresponds to survival probability of: $P = 33.7 / (33.7 + 1) = 0.971$
 
- - Шансы выжить для мужчины из 2 класса: $O = \exp(2.955 - 0.957 - 3.409 - 0.220) = 0.196$   
- Вероятность выжить: $P = 0.196 / 1.196 = 0.164$
+ - Survival odds for a man travelling 1st class: $O = \exp(3.517 - 4.433) = 0.4$   
+ Survival probability: $P = 0.4 / 1.4 = 0.286$
 
-- Шансы выжить для мужчины из 3 класса: $O = \exp(2.955 - 2.916 - 3.409 + 1.717) = 0.191$  
-Вероятность выжить: $P = 0.191 / 1.191 = 0.160$
+ - Survival odds for a man travelling 2nd class: $O = \exp(3.517 - 4.433 - 1.539 + 0.549) = 0.149$   
+ Survival probability: $P = 0.149 / 1.149 = 0.13$
 
-Коэффициенты логистической регрессии, как уже упоминалось, представляют собой изменение логарифма шансов при единичном значении предиктора. Учитывая, что $\ln a - \ln b = \ln a/b$, можно рассматривать угловой коэффициент как логарифм отношения шансов при единичном измении предиктора (0 - нет изменения). Удобнее сравнивать не логарифм, а  само отношение, поэтому можно преобразовать коэффициенты:
+- Survival odds for a man travelling 3rd class: $O = \exp(2.955 - 4.433 - 3.582 + 2.786 ) = 0.103$  
+Survival probability: $P = 0.103 / 1.103 = 0.0934$
+
+```{r}
+newdata  <-  
+  tribble(~sex,     ~pclass,
+          'female', '1st',
+          'male',   '1st',
+          'male',   '2nd',
+          'male',   '3rd')
+
+predict(m_lr_sexclass, newdata) %>% exp()
+```
+
+
+As mentioned above, the slope coefficients for a logistic regression model show the change in log-odds for a unit change in predictor. Since $\ln a - \ln b = \ln a/b$, we can consider the slope coefficient as log-odds ratio for unit change in a predictor. Zero slope corresponds to no change. Instead of log odds ratio, we'd better compare the odds ratio itself. So we can exponentiate the slope coefficients:
 
 ```{r}
 coefficients(m_lr_sexclass) %>% exp()
+
 ```
 
-Теперь сразу видно, что для базовой категории шансы выживания - 19.2, для мужчины из 1 класса шансы выжить ниже (19.2 * 0.0331 = 0.636) и т.д. 
+Now we can clearly see, that for the baseline category (woman in the 1st class) the survival odds are 33.7, for a man in the same class odds are lower (19.2 * 0.0119 = 0.228) etc. 
 
 Отношение шансов = 1 означает отсутствие изменения шансов.
 
