@@ -32,6 +32,7 @@ library(partykit) # Visualization of Conditional Inference and C5.0 Trees
 library(mlr) # MAchine learning framework for R. Here we are using model accuracy metrics provided by the package.
 library(ROCR) # Plotting ROC
 library(RColorBrewer) # Good color scales
+library(modelr) # Working with models in tidyverse
 
 ```
 
@@ -347,88 +348,73 @@ summary(m_lr_sexclass)
 ### Interpreting the coefficients
 
 
-A slope coefficient in a logistic regression model shows the change in logit, i.e. the log-odds for unit change of the predictor. In our model all predictors are dummy variables, so the coefficients show the difference for the corresponding groups of passengers.
+A slope coefficient in a logistic regression model shows the change in logit, i.e. the log-odds for unit change of the predictor. Since $\ln a - \ln b = \ln a/b$, we can treat the slope coefficient as log-odds ratio for unit change in a predictor. Zero slope corresponds to no change.  
 
-Since we've included gender, class and the interaction of the two into the model, now we can compare the survival probability for two passengers of the same gender travelling in the two classes. We can also compare the survival chances of a man and a woman travelling in the same class.
+Instead of log odds ratio, we'd better compare the odds ratio itself. So we can exponentiate the slope coefficients:
 
-Our baseline category in terms of class is the 1st class passenger. A 2nd class passenger has less chances to survive. A 3rd class passenger has even lower chances to survive. Both differences are statistically significant.
+```{r}
+coefficients(m_lr_sexclass) %>% exp()
+```
 
-Our baseline category in terms of gender is a woman. The model shows, that a male would have a significantly lower chance to survive.
+The exponentiated slope coefficients provide the odds-ratios for unit change in the predictor. Odds-ratio equal to 1 means no change.
 
-This situation is different for different classes. For example, among the 2nd class passengers the survival chances for men and women are less different. This is even more true for the 1st class passengers.
+In our model all predictors are dummy variables, so the coefficients show the difference for the corresponding groups of passengers.
+
+Our baseline category is the 1st class female passenger. For such passenger, the model would predict survival odds of $\exp(3.517) = 33.7$. This corresponds to survival probability of $33.7/(33.7 + 1) = 0.971$.
+
+A 2nd class female passenger has less chances to survive, as we can see from the negative sign of the slope coefficient for  `pclass2nd` dummy variable. The odds-ratio is $\exp(-1.539) = 0.215$. This means, that survival odds for a 2nd class female passenger would be about 5 times lower compared to the 1st class: $33.7 * 0.215 = 7.25$. This corresponds to survival probability of $ 7.25 / (7.25 + 1) = 0.878 $.
+
+Similarly, from the negative slope coefficient for the `sexmale` variable we can conclude, that males have lower odds to survive. The odds-ratio is $\exp(-4.433) = 0.0119$. So for a 1st class male passenger survival odds would be $33.7 * 0.0119 = 0.4$, and survival probability $0.4 / (1+0.4) = 0.286$.
+
+
+Since we've included the interaction terms, the survival odds for a 2nd or 3rd class male passengers can be computed by plugging in the numbers into the model we've built.
 
 Let's calculate predictions for a few cases using our model:
-
-
- - Survival odds for a woman travelling 1st class: $O = \exp(3.517) = 33.7$  
- This corresponds to survival probability of: $P = 33.7 / (33.7 + 1) = 0.971$
-
- - Survival odds for a man travelling 1st class: $O = \exp(3.517 - 4.433) = 0.4$   
- Survival probability: $P = 0.4 / 1.4 = 0.286$
 
  - Survival odds for a man travelling 2nd class: $O = \exp(3.517 - 4.433 - 1.539 + 0.549) = 0.149$   
  Survival probability: $P = 0.149 / 1.149 = 0.13$
 
-- Survival odds for a man travelling 3rd class: $O = \exp(2.955 - 4.433 - 3.582 + 2.786 ) = 0.103$  
-Survival probability: $P = 0.103 / 1.103 = 0.0934$
-
-```{r}
-newdata  <-  
-  tribble(~sex,     ~pclass,
-          'female', '1st',
-          'male',   '1st',
-          'male',   '2nd',
-          'male',   '3rd')
-
-predict(m_lr_sexclass, newdata) %>% exp()
-```
+- Survival odds for a man travelling 3rd class: $O = \exp(3.517 - 4.433 - 3.582 + 2.786 ) = 0.181$  
+Survival probability: $P = 0.181 / 1.181 = 0.153$
 
 
-As mentioned above, the slope coefficients for a logistic regression model show the change in log-odds for a unit change in predictor. Since $\ln a - \ln b = \ln a/b$, we can consider the slope coefficient as log-odds ratio for unit change in a predictor. Zero slope corresponds to no change. Instead of log odds ratio, we'd better compare the odds ratio itself. So we can exponentiate the slope coefficients:
-
-```{r}
-coefficients(m_lr_sexclass) %>% exp()
-
-```
-
-Now we can clearly see, that for the baseline category (woman in the 1st class) the survival odds are 33.7, for a man in the same class odds are lower (19.2 * 0.0119 = 0.228) etc. 
-
-Отношение шансов = 1 означает отсутствие изменения шансов.
-
-В тех случаях, когда результаты исследования получены с помощью случайной выборки и их требуется обобщить на генеральную совокупность, можно воспользоваться расчетом доверительных интервалов для коэффициентов регрессии:
+We can also do inference using our model. Usually the training data is considered a sample, so we could do interval estimation of the population's coefficients:
 
 ```{r}
 confint(m_lr_sexclass) %>% exp()
 ```
 
-Однако в нашем случае проверка значимости коэффициентов не имеет смысла, т.к. исходные данные не являются случайной выборкой и их не на что обобщить. Тем не менее, можно ориентироваться на показатели значимости, чтобы оценить точность оценки коэффициентов (т.е. сопоставить величину эффекта для группы с ошибкой оценки этого эффекта).
 
 
-### Альтернативный способ интерпретации модели
+### Alternative method of model interpretation
 
-Вместо того, чтобы интерпретировать отдельные коэффициенты, можно сделать прогноз по модели для типичных представителей разных категорий и сравить вероятности выживания.
+Instead of treating the slope coefficients one by one, we can also just create predictions for a few test cases and compare the predicted survival probabilities.
+
 
 ```{r}
-nd <- tribble(
-  ~pclass, ~sex,
-  "1st",   "female",
-  "1st",   "male",
-  "2nd",   "female",
-  "2nd",   "male",
-  "3rd",   "female",
-  "3rd",   "male"
-  )
+newdata  <-  
+  tribble(~sex,     ~pclass,
+          'female', '1st',
+          'female', '2nd',
+          'female', '3rd',
+          'male',   '1st',
+          'male',   '2nd',
+          'male',   '3rd')
 
-cbind(nd, prob_survive = predict(m_lr_sexclass, newdata = nd, type = "response"))
+
+newdata %>% 
+  add_predictions(m_lr_sexclass, type = 'response', 
+                  var = 'survival_probability')
 
 ```
 
-**Важно:**  поскольку в модели используются факторные переменные, важно чтобы в наборе данных для прогнозирования уровни фактора были такими же, и в том же порядке, что и в наборе, по которому строилась модель. Здесь это достигается благодаря тому, что мы рассмотрели все значения каждого фактора. 
+
+**Note:**  since our model uses factors, it's important to make sure that the factor levels have the same values and order both in training and new data. In the above example it is achieved by enumerating all the possible levels for each factor. To be sure, we could also manually specify the factor levels for the new data.
 
 
-## Логистическая регрессия с сочетанием всех факторов
+## Logistic regression for all available predictors
 
-Теперь построим более сложную регрессию с большим количеством факторов - добавим возрастную категорию и число сопровождающих. Т.к. мы видели, что эти зависимости различные по классам пассажиров, добавим также взаимодействие класса со всеми этими факторами.
+Now we'll build a more complex model that includes all of the relationships and interactions we've discovered at the exploratory data analysis stage. We're adding the age group and the number of companions, as well as the interaction with the pclass variable for all predictors.
 
 ```{r}
 m_lr_all <- glm(survived ~ (sex + agef + sibspf + parchf + sex) * pclass, 
@@ -437,31 +423,35 @@ m_lr_all <- glm(survived ~ (sex + agef + sibspf + parchf + sex) * pclass,
 summary(m_lr_all)
 ```
 
-Модель получилась довольно сложная. Из-за большого числа предикторов увеличились стандартные ошибки оценки коэффициентов, поэтому большинство переменных оказалось незначимыми. Также мы можем наблюдать линейную зависимость между включенными в модель переменными. Один из столбцов - эффект взаимодействия факторов 2 класс и большая группа - был исключен.
+The model has become too complex. Due to large number of predictors, the standard errors for the slope coefficients were inflated and the coefficients became non-significant. 
 
-## Логистическая регрессия - упрощенная модель 
 
-Попробуем упростить модель, используя метод пошагового исключения переменных. Для выбора лучшей модели функция использует критерий AIC.
+## Logistic regression - a simplified model
+
+The stepwise method can also be used for logistic regression models. Here we apply it to simplify the model using AIC:
 
 ```{r}
 m_lr_step <- step(m_lr_all)
 ```
 
-Окончательная модель имеет вид:
+The final model is:
 
 ```{r}
 summary(m_lr_step)
 ```
 
-В упрощенной модели остались главные эффекты всех факторов. Эффекты взаимодействия учитываются только для пола и класса.
+The simplified model includes main effects for all factors (gender, age group, class, number of siblings/spouses) except the number of parents and children.
+The interaction effects are included for gender, class and age group.
 
-## Дерево решений - rpart
 
-Задачу классификации можно решать и с помощью деревьев решений. Пакет `rpart` в R реализует алгоритм построения деревьев решений CART. 
 
-В отличие от логистической регрессии, деревья решений - локальная модель. Благодаря разделению пространства предикторов на независимые части, внутри которых зависимости могут быть никак не связаны с зависимостями в других частях, для деревьев решений не представляют проблемы нелинейные зависимости, которые мы могли наблюдать в данных: например, что дети и пожилые люди имеют больше шансов выжить, чем люди среднего возраста. В логистической регрессии такие зависимости нужно линеаризовать. В деревьях решений мы можем работать с исходными количественными данными. 
+## Decision tree - rpart
 
-Также алгоритм может работать с пропущенными значениями. Если встречается такое значение в  выбранной для разбиения переменной, то наблюдение классифицируется по другим признакам (surrogate split). Однако имеет смысл пробовать исправлять проблему пропущенных значений явно (например, путем подстановки средних, фиктивных значений или категоризации). Это может улучшить качество модели в некоторых случаях.
+The classification task can be solved also by decision trees. In R, the `rpart` package implements the CART  algorithm for building decision trees.
+
+In contrast to logistic regression, decision tree is a **local approach**. A tree splits the predictor space into separate partitions, where in each partition the relationships between predictors and the target may be completeley different compared to other partitions. Because of this, the non-linear relationships in data are automatically approximated by the tree, and we do not care much about modeling these non-linearities, as well as interactions. For example, we could see in the EDA phase, that the survival probability was higher for young children and seniors. To model this correctly with a logistic regression, we've discretized the data. When using decision trees, this is no longer necessary.
+
+Decision tree algorithms can also handle missing data better. If a value of a quantitative variable is missing, a tree-based algorithm can do a **surrogate split** using other predictors. For missing categorical data, NA's are treated a separate category. However, it's recommended to fill the missing values to improve the quality of the model.
 
 ```{r}
 m_rpart <- rpart(survived ~ pclass + sex + sibsp + parch + age,
@@ -470,20 +460,24 @@ rpart.plot(m_rpart)
 
 ```
 
-Алгоритм использует различные критерии для предотвращения чрезмерного "разрастания" дерева решения. В данном случае оно получилось довольно "куцым". 
 
-Наиболее важной переменной является пол: по ней проведено разбиение в первую очередь. Дерево, фактически, предсказывает гибель всем мужчинам старше 9 лет. 
+The first split is by gender, which is the most important predictor. The tree predicts death for all men older than 9 years. Younger men would survive when accompanied by a large number of siblings. 
 
-Для женщин принятие решения несколько сложнее - учитывается также класс, количество сопровождающих и возраст.  Пороги для разбиения по возрасту несколько отличаются от тех, которые мы подобрали визуальным способом: для детей - 9 лет, для взрослых - 24 года. По числу сопровождающих порог такой же, как и в регрессионной модели, правда он один.
+For women, the next split is done by passenger class. For 1st and 2nd class female passengers, the tree predicts survival. For women in the 3rd class, the large number of accompanying siblings and spouses makes survival more probable.
 
-Чистота листьев дерева невысокая. Например, в первом слева листе лишь 80% попавших туда пассажиров в действительности погибли, а в соседнем листе действительно выживших - только 70%. 
-В качестве упражненения попытайтесь увеличить "разборчивость" модели, изменяя параметры остановки алгоритма - по числу узлов, числу примеров в узле и параметру сложности `cp`. 
-Про это можно почитать в справке - см. `?rpart` и `?rpart.control`.
+Interestingly, the threshold for the number of companions is the same as we've used for the logistic regerssion. But age has a different threshold - 9 years instead of 15. 
+
+The purity of the leaf nodes is quite low. For example, the first leaf (counting from the left hand side) is associated with `died` class label. But only about 84% of the passengers in this leaf have actually died.
+
+The `rpart` implementation of the CART algorithm uses different approaches to prevent overfitting and to simplify the trees it produces. In this case, the result is perhaps simplified too much.
+
+We can control the algorithm parameters associated with the tree complexity, such as minimum split, maximum depth, or complexity parameter. Refer to the help to learn, how to set them: `?rpart` and `?rpart.control`.
 
 
-## Дерево решений - ctree
 
-Попробуем применить другой алгоритм построения дерева решений - conditional inference tree (пакет `party`).
+## Decision tree - ctree
+
+Let's try a different implementation of the decision tree algorithm - the Conditional Inference Tree provided by the `party` package.
 
 ```{r, fig.height=7, fig.width=12}
 m_ctree <- ctree(survived ~ factor(pclass) + factor(sex) + age + sibsp + parch,
@@ -491,21 +485,24 @@ m_ctree <- ctree(survived ~ factor(pclass) + factor(sex) + age + sibsp + parch,
 plot(m_ctree)
 ```
 
-Построенное дерево несколько более симметрично, чем в случае `rpart`, однако оно тоже небольшое и с "грязными" листьями.
+The tree produced by `ctree` is similar to the previous one. It is also small and has relatively impure leaves.
 
-## Дерево решений - C5.0
+## Decision tree - C5.0
 
-Попробуем применить еще один алгоритм построения дерева решений - C5.0. Поскольку процедура визуализации дерева не очень хорошо работает с текстовыми переменными, мы выведем структуру построенного дерева в текстовом виде.
+
+Now we try another decision tree algorithm - C5.0. The graphical output doesn't look nice when categorical variables are used, so we use the text-based representation here:
 
 ```{r}
 m_c50 <- C5.0(survived ~ pclass + sex + age + sibsp + parch,
                  data = d_train)
+
 summary(m_c50)
 ```
 
-Построенное дерево очень похоже на дерево, построенное `rpart`. Отличие состоит только в ветви для классификации женщин-пассажиров 3 класса. Вместо возраста используется число сопровождающих детей и родителей.
+The tree is also very similar to `rpart', but it uses different predictors for classifying the male passengers.
 
-Дополнительно построим еще одну модель с помощью этого алгоритма - на этот раз, с использованием бустинга. Судьба пассажира будет прогнозироваться ансамблем из 20 деревьев решений.
+
+Finally, we'll build one more model using the C5.0 algorithm. This is an ensemble mode consisting of decision trees.
 
 ```{r}
 m_c50_boost <- C5.0(survived ~ pclass + sex + age + sibsp + parch,
@@ -513,92 +510,102 @@ m_c50_boost <- C5.0(survived ~ pclass + sex + age + sibsp + parch,
 summary(m_c50_boost)
 ```
 
-Было построено 20 моделей. Первоначальную ошибку классификации модели удалось снизить с 19.9% только до 19.3%.
 
+# Comparing the classifiers
 
-# Сравнение моделей
+## Classifier performance metrics
 
-## Методы оценки качества моделей классификации
+The performance of classifiers is assessed by comparing the predicted and the actual class labels on the test sample. 
 
-Оценить точность классификации можно путем сравнения предсказанных моделью меток классов с фактическими. Только сравнение результатов **на тестовом наборе** данных дает объективную оценку предсказательной силы модели. Использование обучающей выборки для оценки ошибки модели дает чрезмерно оптистичный результат, поскольку многие модели склонны к переобучению.
+Let's consider a few classifier performance metrics on the example of logistic regression. We'll use the simplest 2-predictor model we've constructed in the first step.
 
-Рассмотрим различные методы оценки точности классификатора на примере логистической регрессии с двумя факторами.
+### Interpreting the confusion matrix and the performance metrics
 
-### Интерпретация матрицы ошибок классификации и показателей точности
-
-Поскольку модель логистической регрессии предсказывает не исход, а вероятность исхода, который считается положительным, необходимо преобразовать вероятность в метку класса путем сравнения с некоторым порогом. Для начала используем порог в 50%
+The logistic regression model predicts not the class label, but the probability of the 'positive' outcome. To get the class label, we must introduce an arbitrary threshold. The 'positive' class label will be assigned whenever the predicted probability of the positive outcome is above this threshold. We'll use a 50% threshold in this example.
 
 ```{r}
-# Прогноз вероятности выживания
+# Predict the survival probability for the test data
 pr_lr_sexclass <- predict(m_lr_sexclass, newdata = d_test, type = "response")
 
-# Прогноз исхода для пассажира
-cat("Порог 0.5:\n")
+# Predict the class label
+cat("Threshold 0.5:\n")
 cl_lr_sexclass <- ifelse(pr_lr_sexclass > 0.5, "survived", "died")
 
-# Матрица ошибок классификации (confusion matrix)
+# The confusion matrix
 table(predicted = cl_lr_sexclass, actual = d_test$survived)
 
 ```
 
-Элементами матрицы ошибок классификации являются:
+The confusion matrix contains the following elements:
 
- - $TN = 224$ - истинноотрицательные примеры (предсказана смерть, умер)
+ - $TN = 224$ - true negative cases (death is predicted, and the passenger has died)
  
- - $TP = 106$ - истинноположительные примеры (предсказано спасение, спасся)
+ - $TP = 106$ - true positive cases (survival is predicted, and the passenger has survived)
  
- - $FP = 39$ - ложноположительные примеры (предсказано спасение, умер)
+ - $FP = 39$ - false positive cases (survival is predicted, but the passenger has died)
  
- - $FN = 40$ - ложноотрицательные примеры (предсказана смерть, спасся)
+ - $FN = 40$ - false negative cases (death is predicted, but the passenger has survived)
  
  
-Всего в тестовой выборке 409 пассажиров
+The test sample has 409 passengers:
 
-Используя эту матрицу, можно рассчитать [**показатели ошибки модели**](https://en.wikipedia.org/wiki/Sensitivity_and_specificity):
+```{r}
+nrow(d_test)
+```
 
-**Средняя точность** (accuracy) - доля правильно классифицированных примеров:
+Using the confusion matrix, we can compute the model [**performance metrics**](https://en.wikipedia.org/wiki/Sensitivity_and_specificity):
 
-
-$$ ACC = \frac{TP  + TN}{TP + TN + FP + FN} = \frac{224+106}{409} = 80.7\% $$
-Этот показатель характеризует, как часто модель угадывает правильный ответ.
-
-
-**Средняя ошибка классификации** (overall error rate, mean misclassification error) - доля ошибочно классифицированных примеров:
+**Accuracy** (Overall Success Rate) - a proportion of correctly classified cases:
 
 
-$$ MMCE = \frac{FP  + FN}{TP + TN + FP + FN} = \frac{39+40}{409} = 19.3\% $$
-Этот показатель характеризует, как часто модель ошибается.
+$$ ACC = \frac{TP  + TN}{TP + TN + FP + FN} = \frac{245+67}{409} = 76.3\% $$
 
-**Чувствительность** (sensitivity, true positive rate, recall) - доля положительных примеров, которые были правильно классифицированы как положительные:
-
-$$ TPR =  \frac{TP}{P} = \frac{TP}{TP + FN} = \frac{106}{106 + 40} = 72.6\% $$
-Этот показатель характеризует чувствительность модели при обнаружении положительных примеров. Модель с низкой чувствительностью позволит выявить лишь небольшую часть положительных примеров в данных. Модель с высокой чувствительностью выявит большую часть таких примеров.
+The accuracy shows, how often the model guessess the correct class label.
 
 
-**Специфичность** (specificity, true negative rate) - доля отрицательных примеров, которые были правильно классифицированы как отрицательные:
-
-$$ TNR =  \frac{TN}{N} = \frac{TN}{TN + FP} = \frac{224}{224 + 39} = 85.2\% $$
-Этот показатель аналогичен чувствительности, но здесь интерес представляют отрицательные примеры, а не положительные.
+**Mean misclassification error** (overall error rate) - a proportion of cases classified incorrectly:
 
 
-**Доля ложных срабатываний** (false positive rate, fall-out) - доля неправильно классифицированных отрицательных примеров:
+$$ MMCE = \frac{FP  + FN}{TP + TN + FP + FN} = \frac{5 + 92}{409} = 23.7\% $$
 
-$$ FPR =  \frac{FN}{N} = \frac{FP}{TN + FP} = \frac{39}{224 + 39} = 14.8\% $$
-Этот показатель характеризует, какая доля отрицательных примеров будет ошибочно классифицирована как положительные. Если рассмотреть задачу классификации почты на полезную и спам, то "ложным срабатыванием" модели будет попадание полезного письма в спам ("положительным", т.е. интересным классом здесь будет спам, номальные письма будут "отрицательным" классом). Доля ложных срабатываний в данном случае будет долей полезных писем, попавших в спам.
+The mean misclassification error shows, how often the model assigns an incorrect class label.
 
-Можно видеть, что $FPR = 1 - TNR$, т.е. 1 - специфичность.
+**Sensitivity** (true positive rate, recall) - a proportion of positive examples in the dataset that were correctly labelled as positive:
+
+$$ TPR =  \frac{TP}{P} = \frac{TP}{TP + FN} = \frac{67}{67 + 92} = 42.1\% $$
+
+The sensitivity shows how sensitive is the model while detecting the positive cases. A less sensitive model will allow to detect only a small proportion of the positive cases present in the data. A very sensitive model would detect most of positive cases.
 
 
-**Точность** (precision, positive predictive value) - надежность классификации положительных примеров, т.е. доля классифицированных как положительные примеров, которые действительно являются положительными
+**Specificity** (true negative rate) - a proportion of the negative examples, that were correctly labelled by the model as negative:
 
-$$ PPV =  \frac{TP}{TP + FP} = \frac{106}{106 + 39} = 73.1\% $$
-Возвращаясь к примеру с фильтрацией спама, точность классификатора можно оценить как долю действительно спамерских писем в папке "Спам".
+$$ TNR =  \frac{TN}{N} = \frac{TN}{TN + FP} = \frac{245}{245 + 5} = 98.0\% $$
 
-Для удобства расчета показателей ошибки, создадим функцию. На вход ее нужно подать векторы с прогнозными и фактическими метками класса, метки положительного и отрицательного класса. Также можно подать вектор с вероятностями положительного исхода. Вычисление показателей выполняется с помощью функций пакета `mlr`.
+Specificity is similar to sensitivity, but here we are interested more in negative cases.
+
+
+**False positive rate** (fall-out) - a proportion of incorrectly labelled negative examples:
+
+$$ FPR =  \frac{FP}{N} = \frac{FP}{TN + FP} = \frac{5}{245 + 5} = 2.0\% $$
+
+The False Positive Rate shows the proportion of negative cases, that were mislabelled as positive. Consider a model detecting spam e-mail. The 'false positive' would be the case, when such model would misclassify a 'good' e-mail as spam. The false positive rate in this case would be the proportion of good e-mails ended-up in the 'spam' folder.
+
+We can see, that $FPR = 1 - TNR$, or  $1 - Specificity$.
+
+
+**Precision** (positive predictive value) - the reliability of classification for the positive cases. This is a proportion of the cases labelled as 'positive', that are positive indeed.
+
+$$ PPV =  \frac{TP}{TP + FP} = \frac{67}{67 + 5} = 93.1\% $$
+
+This shows, that we can be pretty sure, that when a model predicts survival for a passenger, she would survive indeed.
+In our example of spam-classification model, the precision would show the proportion of true spam letters in the 'spam' folder.
+
+To simplify the performance assessment, we'll create a function that will compute the above performance metrics. The arguments of such function will be two vectors containing the predicted and the actual class labels, class label names, and an optional vector of probabilities for the positive outcome. The metrics are computed using the functions available in the `mlr` package.
+
 
 ```{r}
 
-# Функция для расчета показателей ошибки
+# The function for computing classifier performance metrics
 perf <- function(predicted, actual, positive, negative,
                  probabilities = NULL ) {
   p <- 
@@ -623,46 +630,51 @@ perf <- function(predicted, actual, positive, negative,
 ```
 
 
-Выведем еще раз таблицу с ошибками классификации для двухфакторной регрессионной модели и посчитаем показатели эффективности. 
+Let's test the function on the same logistic regression model with two predictors:
+
 
 ```{r}
-# Прогноз исхода для пассажира
-cat("Порог 0.5:\n")
+# Prediction of class labels for passengers
+cat("Threshold 0.5:\n")
 cl_lr_sexclass <- ifelse(pr_lr_sexclass > 0.5, "survived", "died")
 
-# Матрица ошибок классификации (confusion matrix)
+# Confusion matrix
 table(predicted = cl_lr_sexclass, actual = d_test$survived)
 perf(cl_lr_sexclass, d_test$survived, positive = "survived", negative = "died") * 100
 ```
 
+The metrics have the same values, as we've calculated manually. The kappa metric will be discussed below.
 
-### Зависимость показателей ошибки от порога классификации
+### How the classification threshold influences the metrics
 
-Мы произвольным образом выбрали порог по вероятности положительного исхода, предсказанной моделью. Если предсказанная вероятность выживания превысит 50%, то пассажир будет классифицирован как выживший. Однако порог можно менять. Так, если нужно правильно классифицировать больше выживших в реальности пассажиров, то порог можно снизить. Тогда классификатор будет относить к выжившим большее количество пассажиров и число верно "угаданных" выживших увеличится. Однако увеличится и число "ложных срабатываний". 
+We've arbitrarily selected the threshold of 50% for survival probability to predict survivals. The classification threshold does influence the results a lot: 
 
-Наоборот, если нежелательно, чтобы модель предскзывала выживание пассажирам, которые в действительности погибли, то можно снизить порог. Но неизбежно сократится и число верно "угаданных" выживших, т.е. чувствительность модели.
+- The lower the threshold, the more predicted positive outcomes there will be, this will increase the TPR. We increase the model's sensitiviy this way. However this will also raise the number of false positives, so FPR will also increase.
 
-Сравним результаты при разных значениях порога классификации:
+- When the threshold is raised, we need more confidence to classify a case as positive, so the FPR will decrease. But, at the same time, the TPR will also decrease. The sensitivity of the model will be lower.
+
+Let's compare the performance metrics for different classification thresholds:
+
 
 ```{r}
 
-cat("Порог 0.8:\n")
-cl_lr_sexclass_80 <- ifelse(pr_lr_sexclass > 0.8, "survived", "died")
-table(predicted = cl_lr_sexclass_80, actual = d_test$survived)
-perf(cl_lr_sexclass_80, d_test$survived, positive = "survived", negative = "died") * 100
 
-cat("\nПорог 0.30:\n")
+cat("Threshold 0.30:\n")
 cl_lr_sexclass_30 <- ifelse(pr_lr_sexclass > 0.3, "survived", "died")
 table(predicted = cl_lr_sexclass_30, actual = d_test$survived)
 perf(cl_lr_sexclass_30, d_test$survived, positive = "survived", negative = "died") * 100
 
 
+cat("\nThreshold 0.9:\n")
+cl_lr_sexclass_90 <- ifelse(pr_lr_sexclass > 0.9, "survived", "died")
+table(predicted = cl_lr_sexclass_90, actual = d_test$survived)
+perf(cl_lr_sexclass_90, d_test$survived, positive = "survived", negative = "died") * 100
 ```
 
 
-### ROC-анализ
+### ROC-analysis
 
-Компромисс между чувствительностью модели (TPR) и долей ложных срабатываний (FPR), можно отобразить в с помощью ROC-кривой (Receiver Operating Curve).
+The trade-off between sensitivity (TPR) and the FPR of a model can be explored using the Receiver Operating Curve (ROC).
 
 ```{r}
 
@@ -671,109 +683,114 @@ performance_lr_sexclass <-
   ROCR::performance("tpr", "fpr")
 
 plot(performance_lr_sexclass, colorize = TRUE,
-     main = "ROC для логрегрессии с факторами: пол и класс")
+     main = "ROC for logistic regression with two predictors - gender and class")
 
 ```
 
-На графике видно, что с увеличением порога классификации снижается доля ложных срабатываний, но и чувствительность тоже падает. 
+From the plot we can see, that when the classification threshold (the color) is increasing, the FPR goes down, but the sensitivity (TPR) does this as well.
 
-Здесь показан характерный вид ROC-кривой. При пороге срабатывания, равном 1, ни одного ложного срабатывания не будет, поэтому FPR = 0. Однако не будет найдено и ни одного положительного примера, поэтому TPR = 0. 
+When threshold = 1, there will be no false positives (FPR = 0), but the model won't find any positive cases at all (TPR = 0). When threshold is 0, all cases will be classified as positive, so TPR = 1. But all negative examples will be classified incorrectly, so FPR is also 1.
 
-При пороге срабатывания 0, все положительные примеры будут найдены и TPR = 1, однако это произойдет потому, что все примеры будут классифицированы как положительные и окажется, что FPR = 1.
+The value of the model arises from the fact, that when we start to lower the threshold, the sensitivity grows faster, than the FPR. At some point, the rates of change in these two metrics will change, and the increase in FPR will be larger than the increase in sensitivity.
 
-Польза от модели состоит в том, что вначале чувствительность растет гораздо быстрее, чем доля ложных срабатываний. Затем, по мере уменьшения порога, картина качественно меняется - доля распознавания положительных примеров замедляет рост, а ложные срабатывания увеличиваются. Можно найти компромиссное значение порога, при котором классификатор находит значительную долю положительных примеров, но доля срабатываний не велика.
+We can find a 'compromise' for the threshold, where a large proportion of positive cases is detected, but the FPR is still low.
 
-Для случайного классификатора, распределяющего метки классов без использования информации, содержащейся в переменных-предикторах, ROC - кривая представляет собой наклонную прямую линию, соединяющую точки (0,0) и (1, 1). Такая классификация не дает никакого выигрыша.
 
-Чем сильнее отклоняется ROC-кривая классификатора от этой наклонной прямой линии, тем лучше он работает. В идеале уже при FPR = 0 должно достигаться полное распознавание всех положительных примеров, т.е. ROC-кривая сразу ступенчато увеличивается до TPR = 1. Такое на практике невозможно, однако степень приближения к "идеалу", выраженная площадью под кривой (area under curve, AUC) позволяет количественно судить о качестве работы классификатора. 
+The ROC curve for a classifier selecting a class label randomly would look like a 45-degree line, connecting (0, 0) and (1, 1) points. Changing the threshold for such a classifier would change TPR and FPR by the same amount, so there's no gain in performance.
 
-Для идеального классификатора AUC = 1. Для бесполезного классификатора AUC = 0.5. Если AUC < 0.5 - модель работает хуже, чем случайный классификатор. Это, как правило, следствие того, что метки классов были перепутаны.
+An ideal classifier would detect all positive cases while making no false positive error. For such a classifier, the ROC curve would look like a L-shaped polyline, that has TPR = 1 right at the zero FPR. This can be rarely observed in practice, but we can compare the ROC for a particular classifier to this 'ideal' shape to judge upon its performance.
 
-Площадь под кривой можно вычислить с помощью функции `mlr::measureAUC()`, передав ей предсказанные вероятности положительного класса и вектор правильных меток. 
+To quantify the performance of a classifier, the Area Under Curve (AUC) metric is used. One cas see, that the ideal classifier would have an AUC = 1. The worthless classifier would have AUC exactly half of this: AUC = 0.5. The actual classifiers would have $0.5 < AUC < 1. When AUC < 0.5, the classifier is worse than the random classifier. Probably, this is due to mixed up class labels.
+
+The AUC metric can be computed using the `mlr::measureAUC()` function. The predicted probabilities for a positive outcome and the true class labels have to be provided as arguments. 
 
 ```{r}
 measureAUC(probabilities = pr_lr_sexclass, truth = d_test$survived, positive = "survived") * 100
 ```
 
-Также этот показатель вычисляется в функции `perf()`, созданной нами ранее, если задать вектор вероятностей положительного класса.
+
+This metric will be computed by the `perf()` function we've defined above, if a vector of probabilities is provided to it.
 
 ```{r}
-perf(cl_lr_sexclass_80, d_test$survived, positive = "survived", negative = "died",
+perf(cl_lr_sexclass_90, d_test$survived, positive = "survived", negative = "died",
      probabilities = pr_lr_sexclass) * 100
 ```
 
 
-При интерпретации показателя можно ориентироваться на следующие диапазоны:
+When interpreting the results, one can refer to the following ranges:
 
-- бесполезный классификатор $AUC < 0.6$
-- слабый классификатор $0.6 \le AUC < 0.7$
-- приемлемый классификатор $0.7 \le AUC < 0.8$
-- хороший классификатор $0.8 \le AUC < 0.9$
-- очень хороший классификтаор $0.9 \le AUC < 1.0$
+- A worthless classifier $AUC < 0.6$
+- A weak classifier $0.6 \le AUC < 0.7$
+- An acceptable classifier $0.7 \le AUC < 0.8$
+- A good classifier $0.8 \le AUC < 0.9$
+- An excellent classifier $0.9 \le AUC < 1.0$
 
-Следует учитывать, что эти оценки субъективны. Кроме того, две модели с одинаковой площадью под кривой могут показывать разную эффективность в зависимости от выбранного порога. Поэтому помимо сравнения численных значений показателя принято еще и визуально сравнивать ROC-кривые моделей на одном графике. Ниже будет показано, как это сделать в R.
+Note, that the ranges are selected subjectively, and the expected performance is highly dependent on a particular type of classification problem.
 
+Also note, that two classifiers with the same AUC might behave differently at different levels of FPR. So, in addition to looking at AUC, we usually compare the shapes of ROC on the plot.
 
-### Kohen's kappa
+### Cohen's kappa
 
-Показатель средней точности модели (Accuracy) может приводить к неверным выводам в условиях несбалансированности классов, т.е. когда примеры положительного класса встречаются редко. Рассмотрим, например, случай выявления мошеннических транзакций в банковской системе. Их частота не велика - предположим, что лишь 1 транзакция из 1 миллиона - мошенническая. Если модель классификации будет для всех транзакций выдавать метку класса: "нормальная", то точность такой модели будет практически 100%. Однако она будет бесполезна для выявления мошеннических транзакций. 
-Даже случайный "классификатор" будет иметь ненулевую точность, поскольку иногда будет выдавать  ответы, случайно совпадающие с правильными.
+Using the Accuracy metric can be misleading, when the classes are not balanced, i.e. when one of the class labels is very rare. For example, a proportion of fraudulent transactions is usually very low, for example 1 transaction in a million is fraudulent. A model, that treats all transactions as 'good' would have a very high accuracy under this setting (close to ACC=100%).  But despite the high accuracy it will be completely useless for its purpose of finding the fraudulent transactions.
 
-Чтобы исключить этот эффект, используется показатель Kohen's kappa, который сопоставляет точность классификатора с точностью случайного классифкатора на тех же данных. При этом случайный классификатор выдает метки классов с вероятностями, равными их относительным частотам в обучающей выборке.
+To take into account the probability of just 'guessing correctly', the Kohen's kappa metric is used. This metric compares the model's performance to the performance of a random classifier, used on the same data. The probabilities for labels, assigned by such a random classifier would be equal to the proportions of the labels in the training data.
 
-Формула показателя:
+Cohen's kappa is calculated as:
 
 $$ \kappa = \frac {ACC - ACC_e} {1 - ACC_e} $$,
 
-где $ACC_e$ - это ожидаемая точность случайного классификатора, которая вычисляется исходя из вероятностей предсказанных и фактических меток классов по формуле:
+where $ACC_e$ - is an expected accuracy of a random classifier, that is computed based on the marginal probabilities for each class label (either predicted or actual):
 
 $$ ACC_e = P(predicted +) \cdot  P(actual +) + P(predicted -) \cdot  P(actual -) $$
 
-Рассчитаем $\kappa$ для нашей модели. Для удобства, преобразуем частоты в таблице ошибок классификации в проценты (от общего количества примеров) с помощью функции `prop.table()`. Тогда, например, вероятность предсказанного положительного класса будет вычисляться как сумма по последней строке таблицы, т.е. TP + FP. 
+Let's calculate $\kappa$ for our model. To simplify calculation, we can output the confusion matrix with proportions instead of counts using the `prop.table()` function. Then, the probability of the positive prediction is the sum for the last row of the table, i.e. TP + FP. 
 
 ```{r}
 table(predicted = cl_lr_sexclass, actual = d_test$survived) %>% prop.table()
 ```
 
-Ожидаемая точность случайного классификатора:
+The expected accuracy of a random classifier:
 
 ```{r}
-(0.0954 + 0.2592) * (0.0978 + 0.2592) + (0.5477 + 0.0978) * (0.5477 + 0.0954)
+(0.0122 + 0.1638) * (0.2249 + 0.1638) + (0.5990 + 0.2249) * (0.5990 + 0.0122)
 ```
 
-Точность, достигнутая моделью:
+The accuracy of our model:
 
 ```{r}
-0.5477 + 0.2592
+0.5990 + 0.1638
 ```
 
-Значение $\kappa = 57.9\%$:
+
+Cohen's $\kappa$:
 
 ```{r}
-(0.807 - 0.542) / (1 - 0.542)
+(0.763 - 0.572) / (1 - 0.572)
 ```
 
-В R этот показатель вычисляется функцией `mlr::measureKAPPA()`
+In R Cohen's $\kappa$ can be computed using the `mlr::measureKAPPA()` functions:
 
 ```{r}
 measureKAPPA(truth = d_test$survived, response = cl_lr_sexclass)
 ```
 
-При интерпретации показателя можно ориентироваться на следующие диапазоны (Landis JR, Koch GG The measurement of obsever agreement for categorical data. Biometrics. 1997; 33:159-174):
+When interpreting $\kappa$ the following ranges can be used (Landis JR, Koch GG The measurement of obsever agreement for categorical data. Biometrics. 1997; 33:159-174):
 
-- неудовлетворительное согласие $\kappa < 0.2$
-- удовлетворительное согласие $0.2 \le \kappa < 0.4$
-- умеренное согласие $0.4 \le \kappa < 0.6$
-- хорошее согласие $0.6 \le \kappa < 0.8$
-- очень хорошее согласие $0.8 \le \kappa < 1.0$
+- unacceptable agreement of the classifier $\kappa < 0.2$
+- acceptable agreement $0.2 \le \kappa < 0.4$
+- a fair agreement $0.4 \le \kappa < 0.6$
+- a good agreement $0.6 \le \kappa < 0.8$
+- an excellent agreement $0.8 \le \kappa < 1.0$
 
 
-Этот показатель также вычисляется разработанной ранее функцией `perf()`.
+Cohen's $\kappa$ is also calculated using the `perf()` function we've defined above.
 
-## Модель логистической регрессии с двумя факторами
+## Performance of the classifiers for the Titanic dataset
+
+### The two-predictor logistic regression, 50% threshold
 
 ```{r}
-cat("Модель логистической регрессии с 2 факторами, порог 0.5:\n")
+cat("The 2 predictor logistic regression, 50% threshold:\n")
 # Матрица ошибок классификации (confusion matrix)
 table(predicted = cl_lr_sexclass, actual = d_test$survived)
 perf(cl_lr_sexclass, d_test$survived, 
@@ -782,26 +799,29 @@ perf(cl_lr_sexclass, d_test$survived,
 ```
 
 
-## Модель логистической регрессии с полным набором факторов
+### The logistic regression with all available predictors
 
 ```{r}
 pr_lr_all <- predict(m_lr_all, newdata = d_test, type = "response")
 cl_lr_all <- ifelse(pr_lr_all > 0.5, "survived", "died")
+
+
+cat("The logistic regression with all available predictors, 50% threshold:\n")
 
 table(predicted = cl_lr_all, actual = d_test$survived)
 perf(cl_lr_all, d_test$survived, positive = "survived", negative = "died",
      probabilities = pr_lr_all) * 100
 ```
 
-При прогнозировании по модели выдается предупреждение. Причина в том, что при ее построении были включены линейно зависимые члены. Т.к. они автоматически исключены, не будем обращать на него внимания.
 
 
-
-## Модель логистической регрессии с пошаговым отбором
+### The simplified logistic regression model from the stepwise procedure
 
 ```{r}
 pr_lr_step <- predict(m_lr_step, newdata = d_test, type = "response")
 cl_lr_step <- ifelse(pr_lr_step > 0.5, "survived", "died")
+
+cat("The stepwise logistic regression, 50% threshold:\n")
 
 table(predicted = cl_lr_step, actual = d_test$survived)
 perf(cl_lr_step, d_test$survived, positive = "survived", negative = "died",
@@ -810,11 +830,13 @@ perf(cl_lr_step, d_test$survived, positive = "survived", negative = "died",
 ```
 
 
-## Дерево решений rpart (CART)
+### Decision tree - rpart
 
 ```{r}
 pr_rpart <- predict(m_rpart, newdata = d_test, type = "prob")[, "survived"]
 cl_rpart <- predict(m_rpart, newdata = d_test, type = "class")
+
+cat("The rpart decision tree:\n")
 
 table(predicted = cl_rpart, actual = d_test$survived)
 perf(cl_rpart, d_test$survived, positive = "survived", negative = "died",
@@ -822,38 +844,52 @@ perf(cl_rpart, d_test$survived, positive = "survived", negative = "died",
 
 ```
 
-## Дерево решений ctree
+### Decision tree - ctree
 
 ```{r}
 
-pr_ctree <- predict(m_ctree, newdata = d_test, type = "prob") %>% 
-  transpose() %>% .[[2]] %>% 
+#The ctree implementation can't handle NAs, so here we replace missings with the median values in the test dataset.
+d_test_cleaned <- 
+  d_test %>%
+  mutate(age = coalesce(age, median(age, na.rm=T)))
+
+pr_ctree <- predict(m_ctree, newdata = d_test_cleaned, type = "prob") %>% 
+  .[, 'survived'] %>% 
   as.numeric()
 
-cl_ctree <- predict(m_ctree, newdata = d_test, type = "response")
+cl_ctree <- predict(m_ctree, newdata = d_test_cleaned, type = "response")
+
+
+cat("The ctree decision tree:\n")
 
 table(predicted = cl_ctree, actual = d_test$survived)
 perf(cl_ctree, d_test$survived, positive = "survived", negative = "died",
      probabilities = pr_ctree) * 100
 
+
 ```
 
-## Дерево решений C5.0
+### Decision tree - C5.0
 
 ```{r}
 pr_c50 <- predict(m_c50, newdata = d_test, type = "prob")[, "survived"]
 cl_c50 <- predict(m_c50, newdata = d_test, type = "class")
+
+
+cat("The C5.0 decision tree:\n")
 
 table(predicted = cl_c50, actual = d_test$survived)
 perf(cl_c50, d_test$survived, positive = "survived", negative = "died",
      probabilities = pr_c50) * 100
 ```
 
-## Дерево решений C5.0 с бустингом
+### Decision tree - C5.0 with boosting
 
 ```{r}
 pr_c50_boost <- predict(m_c50_boost, newdata = d_test, type = "prob")[, "survived"]
 cl_c50_boost <- predict(m_c50_boost, newdata = d_test, type = "class")
+
+cat("The C5.0 decision tree with boosting:\n")
 
 table(predicted = cl_c50_boost, actual = d_test$survived)
 perf(cl_c50_boost, d_test$survived, positive = "survived", negative = "died",
@@ -862,22 +898,24 @@ perf(cl_c50_boost, d_test$survived, positive = "survived", negative = "died",
 ```
 
 
-## Сравнение ROC-кривых
+## Comparing the ROCs
 
-По показателю AUC лучшая модель - ансамбль деревьев C5.0 с бустингом (87.5). На втором месте - модель логистической регрессии с пошаговым отбором (87.4) и на третьем - логистическая регрессия с полным набором факторов и взаимодействий (86.9). Сравним вид ROC-кривых для построенных моделей.
+By looking at AUC we conclude that the best model is an ensemble of C5.0 decision trees (obtained by a boosting procedure). For this model AUC = 84.8.
 
-Для этого можно использовать пакет `ROCR`. Для построения ROC-кривой необходимо:
+The next best two models are the stepwise logistic regression and the `ctree` decision tree, both having AUC = 83.
 
- 1. С помощью функции `prediction()` и векторов вероятностей положительного класса и фактических меток класса получить объект для оценки точности модели.
+Now we compare the ROC curves for all constructed models visually. In R, the `ROCR` package can be used for this. 
 
- 2. С помощью функции `ROCR::performance()` вычислить данные для построения ROC-кривой. Рекомендуем записывать имя этой функции с префиксом пакета `ROCR::`, т.к. функция с таким же именем есть в пакете `mlr` и могут возникать ошибки из-за конфликта имен.
+To plot a ROC curve, we take the following steps:
+
+ 1. Using the  `prediction()` function that takes a vector of predicted positive class probabilities and a vector of actual class labels we create an object that is later used for calculating performance.
+
+ 2. Using the  `ROCR::performance()` function, that takes an object producted in step 1, we compute the performance metrics for plotting the ROC. Since a function with the same name exists also in the `mlr` package, which we also are using here, we need to clarify, which function to use by adding a prefix with the package name: `ROCR::` to to its name.
  
- 3. Полученный с помощью функции `performance()` объект визуализировать командой `plot()`. 
-
-Вначале покажем, как можно применить этот алгоритм пошагово, т.е. отдельно для каждой модели.
+ 3. The object, produced in step 2, can be plotted using the `plot()` function. 
 
 
-**Вычисление ROC-кривых для каждой модели**
+**Computing ROC for each model**
 
 ```{r}
 perf_lr_sexclass <- prediction(pr_lr_sexclass, d_test$survived) %>% 
@@ -897,18 +935,18 @@ perf_c50_boost <- prediction(pr_c50_boost, d_test$survived) %>%
 
 ```
 
-**Построение ROC-кривых на одном графике**
+**Comparing ROCs**
 
-Пакет ROCR использует для визуализации средства базовой графики R. При необходимости, можно познакомиться с их использованием [на сайте Rob Kabacoff](http://www.statmethods.net/graphs/index.html). А сравнение ggplot2 и базовой графики с примерами кода для построения графиков приводится в блоге [Flowing Data](http://flowingdata.com/2016/03/22/comparing-ggplot2-and-r-base-graphics/).
+The `ROCR` package uses base R graphics. If required, you can find examples of working with this plotting system [here](http://www.statmethods.net/graphs/index.html). The Flowing Data blog has a [post](http://flowingdata.com/2016/03/22/comparing-ggplot2-and-r-base-graphics/) comparing ggplot2 and base graphics plotting systems.
 
 ```{r}
-# Генерация цветовой палитры из 7 элементов (столько у нас моделей):
+# Generating a 7 color palette (we've built 7 models):
 pal <- RColorBrewer::brewer.pal(7, "Set1") 
 
-# Построение графика первой ROC-кривой
-plot(perf_lr_sexclass, col = pal[1], main = "Сравнение моделей")
+# Plotting the first ROC
+plot(perf_lr_sexclass, col = pal[1], main = "Comparing the models")
 
-# Добавление остальных ROC-кривых на тот же график
+# Adding the remaining ROCs
 plot(perf_lr_all, col = pal[2], add = TRUE)
 plot(perf_lr_step, col = pal[3], add = TRUE)
 plot(perf_rpart, col = pal[4], add = TRUE)
@@ -916,7 +954,7 @@ plot(perf_ctree, col = pal[5], add = TRUE)
 plot(perf_c50, col = pal[6], add = TRUE)
 plot(perf_c50_boost, col = pal[7], add = TRUE)
 
-# Добавление легенды
+# Adding the color legend
 legend(x = "bottomright",
   legend = 
          c("logistic: sex + class", 
@@ -930,46 +968,48 @@ legend(x = "bottomright",
 
 ```
 
-По графику видно, что хуже всех - модель c5.0. Ее ROC-кривая проходит ниже всех других моделей. Чтобы разобраться в результатах лидеров, построим ROC-кривые трех лучших моделей отдельно.
+From the plot we can see, that the question: "what model is the best?" has different answers depending on what sensitivity is required.
+
+Let's consider the 3 models with largest AUC.
 
 
 ```{r}
-plot(perf_lr_all, col = pal[2])
-plot(perf_lr_step, col = pal[3], add = TRUE)
+plot(perf_lr_step, col = pal[3])
 plot(perf_c50_boost, col = pal[7], add = TRUE)
+plot(perf_ctree, col = pal[5], add = TRUE)
 
 legend(x = "bottomright",
   legend = 
-         c("logistic: all",
-           "logistic: stepwise",
-           "c5.0 + boosting"),
-       fill = pal[c(2, 3, 7)])
+         c("logistic: stepwise",
+           "c5.0 + boosting",
+           "ctree"),
+       fill = pal[c(3, 7, 5)])
 ```
 
-Здесь ситуация неоднозначная. Выбор модели зависит от того, какая доля ложных срабатываний является допустимой. В области низких значений FPR лучше выбрать одну из двух моделей - c5.0 + бустинг или логистическую регрессию без упрощения. В области средних значений FPR (0.4-0.6) лучшая модель - логистическая регрессия с отбором факторов. Если же необходимо выявить практически все положительные примеры (TPR > 90%) ценой увеличения доли ложных срабатываний, то лучшей моделью будет c5.0 + бустинг.
+The performance of the models is very similar for small FPR. Here we'd prefer a simpler logistic regression model. But if we would need to get sensitivity as high as possible while not sacrificing the FPR (0.3 < FPR < 0.7), the best model would be a much more complex ensemble of boosted trees produced by C5.0 algorithm. When the required sensitivity is very high (TPR > 0.9), there's again not much difference between the models.
 
-В целом, учитывая, что ROC-кривые строятся по данным выборки и подвержены случайным факторам, следует считать, что все модели демонстрируют близкие результаты и выбирать из них следует используя дополнительные факторы, например простоту интерпретации. По этому показателю предпочтение следует отдать логистической регрессии с отбором факторов. Ансамбль из 20 деревьев представляет собой "черный ящик", а полная модель логистической регрессии сложна в интерпретации, т.к. содержит 26 коэффициентов.
+In this example we could conclude, that all models show similar results, and additional factors should be used to select the best one. For example, if the interpretability is important, the logistic regression would be preferable. The ensemble of 20 trees, despite having slightly better results, is not interpretable at all.
 
 
-В заключение, покажем, как можно визуализировать ROC-кривые для всех моделей одновременно. Этот способ основан на том, что функция `ROCR::performance()` может вычислять координаты сразу для нескольких ROC-кривых, если предсказанные вероятности положительных классов собрать в одну матрицу с помощью функции `cbind()`. 
+Finally, let's consider a code example to plot all the ROCs simultaneously. This example is based on the fact, that `ROCR::performance()` function can compute all ROCs at once, when the predicted probabilities are assembled into a matrix using  `cbind()` function. 
 
 
 ```{r}
-# Готовим матрицу с прогнозами вероятностей, имя столбца - подпись для легенды
-preds <- cbind("logistic: all" = pr_lr_all, 
-               "logistic: stepwise" = pr_lr_step,
-               "c5.0 + boosting" = pr_c50_boost)
-# Заполняем матрицу такой же формы фактическими метками классов
+# Assembling the matrix with predicted positive class probabilities; a column name will be the plot label
+preds <- cbind("logistic: stepwise" = pr_lr_step, 
+               "c5.0 + boosting" = pr_c50_boost,
+               "ctree" = pr_ctree)
+# Assembling the matrix with actual class labels (it should have the same shape)
 actuals <- matrix(d_test$survived, nrow = nrow(preds), ncol = ncol(preds))
 
-# Считаем данные для ROC-кривой
+# Computing data for ROCs
 pred_mat <- ROCR::prediction(preds, actuals)
 perf_mat <- ROCR::performance(pred_mat, "tpr", "fpr")
 
-# Рисуем все графики сразу
-plot(perf_mat, col = as.list(pal[c(2, 3, 7)])) # Чтобы цвета отображались правильно, нужно преобразовать вектор палитры в список функцией as.list()
+# Plotting all ROCs at once
+plot(perf_mat, col = as.list(pal[c(3, 7, 5)])) # must convert palette vector to a list
 legend("bottomright", legend = colnames(preds),
-       fill = pal[c(2, 3, 7)])
+       fill = pal[c(3, 7, 5)])
 
 ```
 
