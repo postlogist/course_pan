@@ -1,0 +1,1057 @@
+---
+title: "Building predictive models with the mlr framework"
+author: "Gleb Zakhodyakin, postlogist@gmail.com"
+date: '`r format(Sys.time(), "%d.%m.%Y")`'
+output: 
+  html_document: 
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Loading packages, message=FALSE, warning=FALSE}
+library(tidyverse) # Data visualization and transformation
+library(mlr) # Machine Learning framework for R
+library(stringr) # string processing
+library(parallelMap) # Parallel computation
+library(rpart.plot) # Visualization of rpart trees
+```
+
+
+# Introduction
+
+Building a model involves several steps shown below.
+
+![Steps for building a model](figures/modeling_process.png)
+
+
+Each case of predictive modeling is unique. But all such tasks involve very similar steps. R can be employed at each of these steps. But it has a major drawback: an extreme diversity of packages, conceptual and syntactical approaches for modeling. 
+
+
+**Example**: consider predicting class labels using two tree-based models - rpart & ctree
+
+```{r, eval=FALSE}
+# rpart:
+predict(m_rpart, newdata = gr, type = "class") 
+
+# ctree:
+predict(m_ctree, newdata = gr, type = "response")
+```
+
+Both models use the same function for prediction, but require different arguments for doing the same task. Such differences in syntax, as well as the need to include the routine code for data preprocessing, sampling, model evaluation slow down the analysis process and increase the risk of an error. Many machine learning algorithms are computationally intensive, and the performance can be improved by using parallel computation.
+
+Some software tools for data analysis employ a 'Lego' approach by providing a visual editor and a set of unified building blocks for all modeling steps.
+
+![A scenario in Deductor Studio](figures/modules_tree.png)
+
+![A scenario in Rapidminer](figures/modules_network.png)
+
+In R we use code to do the analysis. But this code can be greatly simplified by using special frameworks for building, testing, benchmarking and deploying predictive models. Such frameworks offer an unified interface for many predictive algorithms available in R.
+
+The oldest and the most popular modeling framework in R is [caret](http://topepo.github.io/caret/index.html) package, developed by Max Kuhn.
+
+A more modern framework is the [mlr](https://mlr.mlr-org.com/) package for Machine Learning in R, developed by Bernd Bischl. Unlike caret, the mlr package uses ggplot2 for visualization.
+
+The schema below shows main steps and objects supporting the modeling pipeline in mlr.
+
+![Modeling steps and supporting objects in MLR](figures/schema_mlr.png)
+
+
+The mlr framework unifies and automates many modeling procedures, thus saving time for the analyst.
+
+This tutorial notebook shows examples for using mlr at different stages of modeling - data preprocessing, resampling, training and testing models, tuning the hyperparameters.
+
+
+# Using mlr for regression: predicting price of an used car
+
+## Loading and exploring the data
+
+```{r, message=FALSE, warning=FALSE}
+car_ad <- read_csv("car_ad.csv")
+glimpse(car_ad)
+```
+
+Missing values:
+
+```{r}
+car_ad %>% 
+  gather(key = "variable") %>%
+  filter(is.na(value) | str_length(value) == 0) %>%
+  group_by(variable) %>%
+  summarize(missing = n())
+  
+```
+
+
+Two variables contain missing values - about 5% of the number of observations.
+
+The `car` and `model` variables have a large number of categories.
+
+The most popular cars (only cars with at least 100 sale offers):
+
+```{r Popularity of cars}
+car_ad %>% 
+  group_by(car) %>%
+  summarize(count = n()) %>%
+  arrange(count) %>%
+  filter(count >= 100) %>%
+
+  ggplot(aes(x = fct_inorder(car), y = count)) +
+    geom_bar(stat = "identity") + coord_flip() +
+  labs(x = NULL, y = "Number of sale offers",
+       title = "Most popular cars")
+
+```
+
+
+
+```{r Popularity of models}
+car_ad1 <- car_ad %>% 
+  mutate(model = paste(car, model)) # Merging manufacturer and model for labels
+  
+  
+car_ad1 %>% 
+  group_by(model) %>%
+  summarize(count = n()) %>%
+  arrange(count) %>%
+  filter(count > 60) %>%
+
+  ggplot(aes(x = fct_inorder(model), y = count)) +
+    geom_bar(stat = "identity") + coord_flip() +
+    labs(x = NULL, y = "Number of sale offers",
+       title = "Most popular models")
+  
+
+```
+
+
+We need to convert the text variables into factors. The factor levels will be ordered by popularity. The baseline category will be thus the most popular model.
+
+```{r}
+# Converting strings to factors, as required by mlr
+car_ad1 <- car_ad1 %>% 
+  mutate_if(is_character, fct_infreq)
+
+glimpse(car_ad1)
+  
+```
+
+
+The summary for all variables
+
+```{r}
+summary(car_ad1)
+```
+
+The distributions for quantitative variables are skewed. The engine volume variable has strange values, like 100 liters.
+
+```{r Engine volume histogram}
+ggplot(car_ad1, aes(x = engV)) +
+  geom_histogram() +
+  #xlim(c(0, 10)) +
+  labs(title = "Engine volume histogram, liters")
+```
+
+
+```{r}
+car_ad1 %>%
+  filter(engV > 10) %>%
+  arrange(engV) %>%
+  head(10)
+```
+
+The `99.99` value for the `engV` probably represents a missing observation. Large volumes like 17 liters for an automobile are probably due to data entry errors or wrong units. We'll replace with NAs all strange values. We'll also remove all listings with a zero price. 
+Since the price is inverse proportional to mileage, we can also create an additional variable = `1/mileage`.
+
+```{r Replacing and filtering the incorrect data values, adding a variable}
+car_ad1 <-  car_ad1 %>%
+  filter(price > 0) %>%
+  mutate(inv_mileage = 1000 / (mileage + 1),
+         engV = if_else(engV > 8, as.numeric(NA), engV))
+```
+
+
+## Regression with mlr
+
+### Step 1. Creating a learning task
+
+A **learning task** in mlr is a wrapper for the data table that includes additional attributes of the problem. For example, a **target** variable we are going to predict is marked, the learning task type is specified (regression or classification); a descriptive text label is associated with the task, that can be later used for reporting and visualization.
+
+Price prediction is a regression task, and we use the `makeRegrTask()` to create it.
+
+```{r Creating learning task for car price predictions}
+car_task <- makeRegrTask(id = "Car prices", 
+                         data = car_ad1, target = "price",
+                         fixup.data = "warn")
+print(car_task)
+```
+
+The resulting object contains both the dataset, and special attributes that are used in other modeling stages. The mlr package includes many functions for manipulating the learning tasks.
+
+For example, we can get the number of examples in the learning task this way:
+
+```{r}
+getTaskSize(car_task)
+```
+
+### Step 2. Creating a learner
+
+The mlr package allows using more than a hundred algorithms for classification and regression. The list of available algorithms is provided by the `listLearners()` function. It is also provided in the package's help files and web site - [Available Learners]https://mlr.mlr-org.com/articles/tutorial/integrated_learners.html
+
+```{r List of available learners for regression}
+listLearners(obj = "regr") %>%
+  select(name, class) %>% 
+  mutate(name = substr(name, 1, 60)) %>%
+  head(10) %>% # limiting the output to just 10 learners
+  arrange(name)
+
+```
+
+The `class` column contains a wrapper class for an algorithm, that can be specified in the  `makeLearner()` function. In addition to the class, the list of learners contains attributes for each algorithm. For example, if a particular algorithm can estimate the confidence or the standard error for a prediction. These attributes can be used to select a suitable algorithm programmatically.
+
+The overall number of regression algorithms in mlr:
+
+```{r}
+listLearners(obj = "regr") %>% count()
+```
+
+
+Now we create a learner based on multiple linear regression
+
+
+```{r}
+lrn_lm <- makeLearner("regr.lm", id = "Linear Regression")
+lrn_lm
+
+```
+
+The resulting object has metadata on the algorithm type, attributes, default prediction type and available hyperparameters.
+Hyperparameters are the parameters of an algorithm, that control its behaviour. Such hyperparameters are not estimated based on the data, they must be set apriori.
+
+For example, the OLS linear regression has no hyperparameters. The coefficients of the model are estimated from the data. But the Lasso regression has one hyperparameter - $\lambda$, that sets the weight of the penalty term and effectively limits the complexity of the resulting model.
+
+A list and the default values can be viewed using the `getLearnerParamSet()` and `getLearnerParVals()` functions.
+
+```{r}
+lrn_lm %>% getLearnerParamSet()
+```
+
+The description of the parameters is available via the  `helpLearnerParam()` function.
+```{r}
+lrn_lm %>% helpLearnerParam()
+```
+
+
+
+### Step 3. Preprocessing
+
+Preprocessing means transforming the training data to the state that is optimal for modeling.
+
+For example:
+
+- removing some variables
+- handling missing values
+- filtering outliers
+- removing variables with constant values
+
+The non-required columns can be removed from the learning task with the `dropFeatures()` function.
+
+On the exploratory analysis stage we found that car model and maker names are categorical variables with a large number of levels. These variables are definitively important for price prediction, but it's not possible to include them to a model directly. Doing so will lead to a few issues:
+ - the model will become very large (each category will be converted into a dummy variable)
+ - when splitting the training and testing subsets, some rare categories may appear only in training sample, which will cause an error when predicting
+ 
+To prevent this, we'll merge all rare categories into a single ".other" category
+
+```{r}
+car_task <- car_task %>%
+  mergeSmallFactorLevels(min.perc = 0.015, # minimum relative frequency of a category to appear on it's own
+                         new.level = ".other")
+```
+
+
+You can read about the issue of new factor levels when predicting here:
+https://github.com/mlr-org/mlr/issues/811
+
+
+We've already removed the outliers (incorrect values for engine size and price) using the standard tools available in `dplyr`. But mlr also has features to handle outliers - see https://mlr.mlr-org.com/articles/tutorial/preproc.html
+
+Many algorithms can't handle NA's. For example, an attempt to train a linear regression on a daset with NA's will fail.
+
+```{r}
+#m_lm <- train(lrn_lm, car_task) # doesn't work due to NA
+```
+
+Missing values can be filtered or replaced with a `typical` or special values. The mlr package has `impute()` function, that can be used to fill in the NAs.
+
+Here we will replace NAs for categorical variables with the "Unknown" value. For quantitative predictors we'll simply use the average.
+
+```{r Replacing NAs in drive and engV variables}
+car_imputation <- car_task %>%
+  impute(classes = list(numeric = imputeMean(), 
+                        factor = imputeConstant("Unknown"))) 
+
+car_imputation
+```
+
+The `impute()` functions returns an object, that contains both the learning task with NAs replaced (the `task` attribute), and the strategy for replacing NAs - the imputation description (the `desc` attribute). This imputation description can be later applied to new learning tasks, for example, when we apply the model to new data for prediction.
+
+For ease of access, here we extract the processed learning task with replaced NAs to a separate variable:
+
+```{r}
+car_imputed <- car_imputation$task
+```
+
+### Step 4. Training a model
+
+To train any model, mlr uses the  `train()` function. When required, we can set additional algorithm parameters, or the prediction type (e.g. should it be the class label or probability) 
+
+```{r Training the linear regression model}
+m_lm <- train(lrn_lm, car_imputed)
+m_lm
+```
+
+
+The resulting object contains the trained model and the metadata. To work with the model using the standard R tools, it must be extracted from the object. For example, here we use the R's built-in `summary()` function to display the regression model coefficients and summary.
+
+```{r Extracting the trained model}
+m_lm %>% 
+  getLearnerModel() %>%
+  summary()
+```
+
+### Step 5. Evaluating model performance
+
+#### Manual train/test splitting
+
+The predictive performance of a model should be evaluated on the new data, not used for training. A simplest approach is hold-out, or train/test splitting.
+
+One way of doing tain/test split is using the `subsetTask()` function, that can take a vector of row numbers for training and testing samples. We could also specify the subset of row indices for training right within the `train()` function call.
+
+Let's use the latter method here:
+
+```{r Manual train/test split}
+# Creating the row indices for training and testing sambles
+set.seed(123) # for reproducibility
+car_n <- getTaskSize(car_task)
+car_train <- sample(car_n, size = car_n * 0.7)
+car_test <- base::setdiff(1:car_n, car_train)
+
+# Training the model using only the training sample
+car_mod_lm <- train(lrn_lm, task = car_imputed, 
+                    subset = car_train)
+
+```
+
+
+Computing the forecast on the test sample:
+
+```{r Computing the forecast on the test sample}
+car_pred_lm <- predict(car_mod_lm, 
+                       task = car_imputed, 
+                       subset = car_test)
+
+car_pred_lm
+```
+
+
+Performance metrics for a model can be computed using the `performance()` function. Here we create a list of performance metrics to consider - `reg_ms`.
+
+```{r Evaluating the regression model performance}
+reg_ms <- list(rmse, mape, mae)
+
+performance(car_pred_lm,
+            measures = reg_ms) %>%
+  round(2)
+```
+
+The model is quite poor, having MAPE = 118%.
+
+#### Automated model performance evaluation
+
+Testing a model on new data is a very common operation, so mlr can automate it.
+First, the resampling strategy should be specified using the `makeResampleDesc()` function.
+
+```{r Creating the resampling strategy}
+car_rdesc <- makeResampleDesc(method = "Holdout", 
+                              split = 0.8, 
+                              stratify.cols = "car")
+car_rdesc
+```
+
+Here we are using **stratification**. This is an approach when resampling is done separately for each subgroup. In our case the subgroups are created using the `car` variable. Then, the same proportion of each car model will be provided in training and in testing samples. This can be helpful to prevent the error due to new factor levels when predicting.
+
+After the resampling strategy is created, the model's performance can be easily assessed using the `resample()` function:
+
+```{r Automated performance evaluation on the test sample}
+set.seed(123)
+resample(learner = lrn_lm, 
+         resampling = car_rdesc, 
+         task = car_imputed,
+         measures = reg_ms)
+```
+
+Another popular resampling strategy is **cross-validation**. It involves splitting a dataset into $k$ slices (or folds). Then each slice is used as a test set while training the model on the remaining $k-1$ slices of data. The performance metrics obtained on the test sample are then aggregated. 
+
+![Cross-Validation](figures/cv.png)
+
+Here we use the 10-fold cross-validation for evaluating the regression model performance:
+
+```{r}
+car_rdesc_cv <- makeResampleDesc(method = "CV",
+                                 iters = 10,
+                                 stratify.cols = "car")
+set.seed(123)
+
+resample(learner = lrn_lm, 
+         resampling = car_rdesc_cv, 
+         task = car_imputed,
+         measures = reg_ms,
+         show.info = TRUE)
+
+```
+
+### Step 6. Forecasting
+
+The new model can be applied to the new data using the `predict()` function.
+
+When the training data was preprocessed, the same preprocessing steps should be applied to new data as well. In our case we imputed the missing values, and stored the imputation stragegy in the `car_imputation` variable. Now we can re-apply the imputation strategy to the new data using the `reimpute()` function.
+
+We must also ensure, that the factor levels in new data are the same, as in the training data
+
+```{r Applpying preprocessing to new data}
+
+# Creating a new car
+new_car2 <- tibble(car = "Ford", body = "crossover",
+              mileage = 10, engV = 2.7,
+              inv_mileage = 1000 / (10 + 1),
+              engType = "Gas", registration = "yes",
+              year = 2012, drive = "full", model = ".other"
+              )
+
+# Applying the imputation strategy
+new_car2_imp <- new_car2 %>%
+  mutate_if(is.character, as.factor) %>%
+  reimpute(desc = car_imputation$desc)
+
+# In our case there's no difference, since there were no NAs in new data
+predict(car_mod_lm, newdata = new_car2)
+predict(car_mod_lm, newdata = new_car2_imp)
+
+```
+
+### Plotting the forecasts
+
+For asssessment of the model's adequacy visual inspection of the forecasts is an important step. The mlr package has built-in visualization tools that are helpful for checking how the model is doing on a particular dataset. These tools are limited just to two predictors, since we can't visualize more than 3 dimensions. Despite this, it can be useful to understand what's going on.
+
+```{r Plotting a one-predictor model performance}
+plotLearnerPrediction(lrn_lm, task = car_imputed,
+                      features = "inv_mileage",
+                      measures = mape)
+```
+
+```{r Plotting a two-predictor model performance}
+plotLearnerPrediction(lrn_lm, task = car_imputed,
+                      features = c("inv_mileage", "engV"),
+                      measures = mape)
+```
+
+
+### Comparing the regression models
+
+Let's compare several regression models - linear regression (lm), lasso and ridge regression (glmnet), and two types of trees - rpart and ctree.
+
+The `makeLearners()` function can create several learners at once. The resulting list of learners can be later extended by adding new models.
+
+```{r}
+car_learners <- makeLearners(
+  c("lm", "glmnet", "rpart", "ctree"),
+  ids = c("lm", "lasso", "rpart", "ctree"),
+  type = "regr")
+```
+
+
+The default type of regression used by glmnet is lasso (`\alpha = 1`). Let's create another learner for ridge regression and add it to the list.
+
+```{r}
+lrn_ridge <- makeLearner(cl = "regr.glmnet", id = "ridge", alpha = 0)
+lrn_ridge %>% getLearnerParVals()
+```
+
+```{r}
+car_learners$ridge <- lrn_ridge
+```
+
+
+One way of comparing the models is processing the resulting list of learners using the `lapply()` function. This function applies a given function fo each element of a list and stores the results in a new list.
+
+```{r, eval=FALSE}
+car_models <- car_learners %>%
+  lapply(train, task = car_imputed)
+```
+
+
+We can plot the output of the models limited to two predictors - inverse mileage and engine volume:
+
+```{r}
+car_learners %>%
+  lapply(plotLearnerPrediction, 
+         task = car_imputed,
+         features = c("inv_mileage", "engV"),
+         measures = mape)
+
+```
+
+The best results are obtained from the ctree model.
+
+The performance measures can be computed using the  `resample()` function. We can apply it to the list of learners using the `lapply()` function:
+
+```{r, eval=FALSE}
+set.seed(123)
+car_learners %>%
+  lapply(resample, task = car_imputed,
+         resampling = car_rdesc_cv,
+         measures = reg_ms,
+         show.info = FALSE)
+
+```
+
+Thers's a better way of comparing the models in mlr - by using the  `benchmark()` function. This function can in one step apply multiple learners to multiple traning tasks and compare the performance using a selected resampling stragegy. This can be done using parallell computation, which can speed-up the process on modern multi-core CPUs.
+
+
+```{r Comparing models for car price prediction}
+set.seed(123, "L'Ecuyer") # For reproducibility. The L'Ecuyer random number generator must be used, if parallel computation is used.
+
+# Detecting the number of avaliable CPU cores
+num_cores <- parallel::detectCores()
+
+# Starting parallelization
+parallelStartSocket(num_cores) # This method is used for Windows, but other methods are available for Unix-based systems.
+
+car_bench <- car_learners %>%
+  benchmark(tasks = car_imputed,
+         resampling = car_rdesc_cv,
+         measures = append(list(timetrain), reg_ms),
+         show.info = FALSE)
+
+# Stopping parallelization
+parallelStop()
+
+```
+
+The results are assembled into a benchmarking results object, which is stored in the `car_bench` variable.
+The benchmarking results can be converted into a table and visualized:
+
+
+```{r}
+car_bench %>%
+  getBMRAggrPerformances(as.df = TRUE) %>%
+  arrange(mape.test.mean) %>%
+  select(learner.id, mape.test.mean, timetrain.test.mean)
+
+```
+
+Plotting the benchmarking results:
+
+```{r Visualizing average MAPE and training time for car price prediction}
+car_bench %>%
+  getBMRAggrPerformances(as.df = TRUE) %>%
+  arrange(mape.test.mean) %>%
+  ggplot(aes(x = fct_inorder(learner.id),
+             y = mape.test.mean)) +
+  geom_bar(stat = "identity") +
+  geom_line(aes(y = timetrain.test.mean * 4, group = 1),
+            color = "red") +
+  scale_y_continuous(labels = scales::percent,
+                     sec.axis = sec_axis(~ . * 1000 / 4,
+                                         name = "Training time, ms")) +
+  labs(title = "Performance of learners for the car price prediction task",
+       x = "Model", y = "MAPE")
+```
+
+The most accurate algorithm is ctree, the fastest - rpart.
+
+See laso  https://mlr.mlr-org.com/articles/tutorial/benchmark_experiments.html
+
+
+# Classification with mlr
+
+## Loading data and exploratory analysis
+
+Here we use the mlr package to train classifiers. We'll consider the employee turnover classification problem  considered in the tutorial on decision trees (../decision-trees/decision-trees.Rmd).
+
+Loading data
+
+```{r}
+turnover <- readRDS("turnover.RDS")
+head(turnover)
+
+```
+
+Plotting turnover vs monthly workload and evaluation score of an employee. 
+
+```{r, fig.width=10}
+turnover %>%
+  mutate(performance = if_else(last_evaluation >= 8, 
+                               "High performing employees", "Regular employees")) %>%
+  ggplot(aes(x = satisfaction_level, 
+             y = average_monthly_hours,
+             color = left)) + #,
+             #size = last_evaluation >= 8)) +
+  geom_jitter(alpha = 0.1) +
+  facet_wrap(~ performance) +
+  labs(title = "Risk factors for employee turnover")
+```
+
+Checking variable distributions and assessing the technical data quality:
+
+```{r}
+summary(turnover)
+```
+
+No missing values are present
+
+
+## Creating a learning task
+
+```{r}
+turnover_task <- makeClassifTask(id = "Employee turnover",
+                                 data = turnover,
+                                 target = "left",
+                                 positive = "left")
+turnover_task
+```
+
+
+## Creating a learner
+
+The number of available classification learners:
+
+
+```{r}
+listLearners("classif") %>%
+  count()
+```
+
+A list of available classification learners:
+
+```{r}
+listLearners("classif") %>%
+  select(name, package) %>%
+  mutate(name = substr(name, 1, 60)) %>%
+  head(10)
+
+```
+
+See also the online help for [Available Learners]https://mlr.mlr-org.com/articles/tutorial/integrated_learners.html
+
+
+Here we create a list of classification learners:
+
+```{r}
+turnover_learners <- 
+  makeLearners(cls = c("logreg", "rpart", "ctree", "C50"),
+               ids = c("Log. regression", "rpart", "ctree", "C5.0"),
+               type = "classif", predict.type = "prob")
+```
+
+By adding the `type` parameter, we can shorten class names by omitting the `classif.` prefix for the algorithm name from the table.
+
+
+## Benchmarking the classifiers
+
+Let's create the resampling strategy for our classification taks:
+
+```{r}
+turnover_rdesc <- makeResampleDesc(method = "CV", 
+                                   stratify = TRUE,
+                                   iter = 10)
+```
+
+Here we also use stratification, but instead of splitting by predictor values, here we try to maintain the same proportion of class labels in training and test samples. This means, that the proportion of employees who are leaving the company will be the same in training and testing samples.
+
+
+Let's compare the models using the `benchmark()` function:
+
+```{r}
+# A list of model performance metrics for classification
+clas_ms = list(auc, kappa, mmce, tpr, tnr, fpr)
+
+# Setting the random number generator for reproducibility
+set.seed(123, "L'Ecuyer")
+
+# Starting parallelization
+parallelStartSocket(num_cores)
+
+turnover_bench <- turnover_learners %>%
+  benchmark(tasks = turnover_task,
+         resampling = turnover_rdesc,
+         measures = append(list(timetrain), clas_ms),
+         show.info = FALSE)
+
+parallelStop()
+
+```
+
+Extracting and analysing the benchmarking results
+
+```{r}
+turnover_bench %>%
+  getBMRAggrPerformances(as.df = TRUE) %>%
+  arrange(desc(auc.test.mean)) %>%
+  select(-task.id) %>%
+  mutate_if(is.numeric, round, digits = 3)
+```
+
+```{r}
+turnover_bench %>%
+  getBMRAggrPerformances(as.df = TRUE) %>%
+  arrange(desc(auc.test.mean)) %>%
+  ggplot(aes(x = fct_inorder(learner.id))) +
+           geom_bar(aes(y = auc.test.mean), stat = "identity") +
+           geom_line(aes(y = timetrain.test.mean * 20, group = 1),
+                     colour = "red") +
+  scale_y_continuous(sec.axis = sec_axis(~ . * 1000 / 20, 
+                                         name = "Training time, ms"),
+                     labels = scales::percent) +
+    labs(title = "Training time and AUC for the classifiers",
+       x = "Model", y = "AUC")
+
+```
+
+The most accurate algorithm is C5.0, the fastest - rpart. This algorithm is also very close in terms of accuracy to the leader.
+
+
+Let's plot the decision boundaries for the classifers. We can use at most two predictors - the satisfaction level and the monthly workload:
+
+```{r}
+turnover_learners %>%
+  lapply(plotLearnerPrediction, task = turnover_task,
+         features = c("satisfaction_level",
+                      "average_monthly_hours"))
+```
+
+## Exploring the classifiers
+
+Let's extract a trained rpart model that has demonstrated the best balance for speed and accuracy:
+
+```{r}
+turnover_rpart <- turnover_learners$rpart
+turnover_rpart
+```
+
+
+For plotting ROCs, we need to create a forecast for test data. For this, we'll split the `turnover_task` learning task into a training and a testing subtasks.
+
+
+```{r}
+set.seed(123)
+# Task size - the number of examples
+turnover_n <- getTaskSize(turnover_task)
+
+# sampling the row indices for training and testing subsamples
+turnover_train <- sample(turnover_n, size = 0.7 * turnover_n)
+turnover_test <- setdiff(1:turnover_n, turnover_train)
+```
+
+Training the model and forecasting on the test sample:
+
+```{r}
+turnover_m_rpart <- train(learner = turnover_rpart,
+                          task = turnover_task,
+                          subset = turnover_train)
+
+turnover_pr_rpart <- predict(turnover_m_rpart,
+                             task = turnover_task,
+                             subset = turnover_test)
+```
+
+Plotting the resulting decision tree:
+
+```{r, fig.height=7, fig.width=12}
+rpart.plot(getLearnerModel(turnover_m_rpart), cex = 0.8, roundint = F)
+```
+
+
+Classifier performance on the test sample:
+
+```{r}
+performance(turnover_pr_rpart,
+            measures = clas_ms) %>%
+  round(4)
+```
+
+Depending on the threshold, the sensitivity (TPR) and the FPR of the classifier will change.
+
+The current threshold is 50%:
+
+```{r}
+turnover_pr_rpart$threshold
+```
+
+When required, the classifier threshold can be set using the `setThreshold()` function. 
+
+For building the ROC, we need to generate the table for TPR and FPR corresponding to different thresholds. This is done using the `generateThreshVsPerfData()`. The first metrics for the list sholuld be  FPR and TPR, since these are used for plotting the ROC.
+
+Afterwards, we can plot the individual performance metrics using the `plotThreshVsPerf()` function:
+
+
+```{r}
+turnover_roc <- generateThreshVsPerfData(turnover_pr_rpart, 
+                         measures = list(fpr, tpr, tnr, kappa))
+plotThreshVsPerf(turnover_roc)
+```
+
+The same data are used for the ROC plot:
+
+```{r}
+plotROCCurves(turnover_roc)
+```
+
+The confusion matrix is computed using the `calculateConfusionMatrix()` function:
+
+```{r}
+calculateConfusionMatrix(turnover_pr_rpart)
+```
+
+When required, the proportions of different error types can be calculated instead of counts:
+
+```{r}
+calculateConfusionMatrix(turnover_pr_rpart, relative = T)
+```
+
+To compare several models, we can use the `lapply()` function for list processing:
+
+```{r}
+turnover_models <- 
+  turnover_learners %>%
+  lapply(train, task = turnover_task, subset = turnover_train)
+
+turnover_predictions <- 
+  turnover_models %>%
+  lapply(predict, task = turnover_task, subset = turnover_test)
+```
+
+The ROC plotting function can handle lists on its own:
+
+```{r}
+turnover_roc2 <- 
+  generateThreshVsPerfData(turnover_predictions,
+                           measures = list(fpr, tpr))
+
+plotROCCurves(turnover_roc2)
+
+```
+
+We can also extract the data table stored inside the object generated by `generateThreshVsPerfData()` and use regular `ggplot2` syntax to create a custom visualization:
+
+```{r Custom visualization for ROC comparison}
+turnover_roc2$data %>%
+  ggplot(aes(fpr, tpr, colour = learner)) +
+  geom_path() +
+  geom_abline(slope = 1, linetype = "dashed") +
+  labs(title = "ROC for employee turnover classifiers",
+       colour = "Model",
+       x = "False Positive Rate",
+       y = "True Positive Rate")
+```
+
+The best results are obtained from C5.0 and rpart models.
+
+See also
+https://mlr.mlr-org.com/articles/tutorial/roc_analysis.html
+
+
+
+
+## Tuning the hyperparameters
+
+Most machine learning algorithms have **hyperparameters** that control the behaviour of the algorithm and influence the performance of the resulting model. For example, the rpart decision tree algorithm has the following hyperparameters:
+
+```{r}
+getLearnerParamSet(turnover_rpart)
+```
+
+Consider two hyperparameters of a rpart tree:
+  - `minsplit` - the minimum number of observations in a node for splitting,  
+  - `cp` - the complexity parameter - the minimum relative increase in the purity to keep a split.
+  
+Lower values of the parameters produce larger trees.
+
+
+The table shown above lists the type, the default valuea, the range and the ability of tuning for each available hyperparameter.
+
+
+To tune the hyperparameters, we create a parameter set using the `makeParamSet()` function. The list of parameters to tune and the range of values to consider should be provided as an input to the function.
+
+Let's create a parameter set with two hyperparamaters  - `cp` (changed from $10^{-4}$ to $10^{-2}$ nonlinearly) and `minsplit` (changed from 4 to 40 linearly)
+
+```{r Creating a parameter set for tuning}
+ps_rpart = makeParamSet(
+  makeNumericParam("cp", lower = -4, upper = -2,
+                   trafo = function(x) 10^x), # transformation function enables non-linear change
+  makeIntegerParam("minsplit", lower = 4, upper = 30))
+```
+
+The `trafo` parameter allows to set a transformation function, that is applied to the range of values to enable the non-linear change in parameter values. Here we use the $10^x$ to create the set of values:  {0.0001, 0.001, 0.01} for `cp`.
+
+As the number of parameters in a set, or the range of each parameter grows, the number of possible combinations is exponentially increasing.
+
+The mlr package provides several algorithms to optimize the hyperparameters - see https://mlr.mlr-org.com/articles/tutorial/tune.html.
+
+The simplest, the most reliable and the slowest approach is the total enumeration of all possible parameter combinations. It is selected by the `makeTuneControlGrid()` function.
+
+A quicker method is provided by  `makeTuneControlRandom()` function. This method implements a random search, which can be quicker for larger search spaces, but it doesn't provide any warranty for optimality.
+
+Here we use the simulated annealing algorithm, that combines a directed search and random search. This method is provided by the `makeTuneControlGenSA()` function.
+
+
+```{r Optimizing the hyperparameters, message=FALSE}
+
+# Setting the random number generator for reproducibility
+set.seed(123, "L'Ecuyer")
+
+# Selecting the optimization algorithm
+control_rpart = makeTuneControlGenSA(budget = 200)
+
+# Selecting the resampling strategy
+cv_rdesc = makeResampleDesc("CV", iters = 5) # 10-fold CV would be slower
+
+# Tuning the parameters
+parallelStartSocket(num_cores)
+
+res_rpart = tuneParams(turnover_rpart,
+                       measures = auc,
+                       task = turnover_task,
+                       control = control_rpart,
+                       resampling = cv_rdesc,
+                       par.set = ps_rpart,
+                       show.info = FALSE)
+
+parallelStop()
+
+```
+
+The best combination of parameters:
+
+```{r}
+print(res_rpart)
+```
+
+We can visualize the relationship between the metric and the hyperparameter values:
+
+```{r}
+generateHyperParsEffectData(res_rpart) %>%
+  plotHyperParsEffect(x = "cp", y = "auc.test.mean",
+                      plot.type = "line",
+                      #z = "minsplit",
+                      facet = "minsplit")
+```
+
+We can observe from the plots, that for higher `minsplit` values the AUC doesn't depend much on the `cp`. But when `minsplit` is small, the `cp` becomes more important to prevent overfitting.
+
+We can also plot a heatmap to show the dependence of AUC on two hyperparameters simultaneously:
+
+```{r}
+generateHyperParsEffectData(res_rpart) %>%
+  plotHyperParsEffect(x = "cp", y = "minsplit",
+                      z = "auc.test.mean",
+                      plot.type = "heatmap",
+                      interpolate = "regr.earth",
+                      show.experiments = TRUE) +
+  scale_fill_viridis_c()
+```
+
+The heatmap shows the points obtained for different hyperparameter combinations while searching, as well as the interpolated surface for the AUC. Here we can see that the highest AUC is obtained for $minsplit \approx 10$ and $cp \approx 10^{-2.7}$
+
+
+See also https://mlr.mlr-org.com/articles/tutorial/hyperpar_tuning_effects.html
+
+
+Let's create a model with optimized hyperparameters:
+
+```{r}
+# Creating a learner
+turnover_rpart_opt <-  makeLearner("classif.rpart", 
+                                   predict.type = "prob",
+                                   par.vals = 
+                                     list(cp = 10^(-2.7),
+                                          minsplit = 10))
+# Training the model
+m_rpart_opt <- train(turnover_rpart_opt,
+                     task = turnover_task,
+                     subset = turnover_train)
+
+# Forecasting on the test sample
+pr_rpart_opt <- predict(m_rpart_opt, task = turnover_task,
+                        subset = turnover_test)
+
+```
+
+Let's compare the optimized and the initial model
+
+```{r}
+# Getting data for ROCs
+turnover_rpart_compare <- 
+  generateThreshVsPerfData(
+    list("rpart" = turnover_predictions$rpart,
+         "rpart, tuned" = pr_rpart_opt),
+    measures = list(fpr, tpr))
+
+# Comparing the ROCs
+turnover_rpart_compare$data %>%
+  ggplot(aes(x = fpr, y = tpr, color = learner)) +
+  geom_path() + 
+  geom_abline(slope = 1, linetype = "dashed",
+              color = "darkgray") +
+  labs(title = "ROC for the initial and the optimized models",
+       colour = "Model")
+```
+
+A tiny improvement...
+
+Let's compare also the trees constructed by the two models
+
+```{r, fig.height=7}
+
+# Initial model
+getLearnerModel(turnover_m_rpart) %>%
+  rpart.plot(main = "Initial Decision Tree", roundint=F)
+
+# Tuned model
+getLearnerModel(model = m_rpart_opt) %>%
+  rpart.plot(main = "Decision Tree (tuned model)", roundint=F)
+
+```
+
+The tuned model allowed a slightly larger decision tree.
+
+
+We can also evaluate the tuning effect by visualizing the decision boundaries for the two models (limited to just two predictors)
+
+
+```{r}
+
+list(rpart = turnover_rpart, 
+     rpart_opt = turnover_rpart_opt) %>%
+  lapply(plotLearnerPrediction,
+         task = turnover_task,
+         features = c("satisfaction_level",
+                      "average_monthly_hours"),
+         measures = list(tpr, fpr))
+```
+
+When using 2 predictors, the tuned model is identical  to the initial model.
+
+
+# Resources
+
+ - Recording of Bernd Bishl's master class on OpenML + R + mlr https://www.youtube.com/watch?v=rzjkT1uLNi4&t=672s
+ - MLR Tutorial, online https://mlr.mlr-org.com/articles/tutorial/task.html (см. меню Basics и Advanced в верхней части страницы)
+ - MLR Tutorial, pdf https://arxiv.org/abs/1609.06146
+ - What to do when you get an error caused by new factor levels when forecasting https://github.com/mlr-org/mlr/issues/811
+ - The list of learners available in mlr https://mlr.mlr-org.com/articles/tutorial/integrated_learners.html
+ - Tuning the hyperparameters: https://mlr.mlr-org.com/articles/tutorial/tune.html and https://mlr.mlr-org.com/articles/tutorial/hyperpar_tuning_effects.html 
+ 
