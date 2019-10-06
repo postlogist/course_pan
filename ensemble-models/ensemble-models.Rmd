@@ -219,6 +219,9 @@ tune xgboost
 set.seed(123, "L'Ecuyer")
 lrn_xgb_tune <- makeLearner("regr.xgboost")
 
+rdesc_CV5 <- makeResampleDesc(method = "CV", 
+                                   iter = 5)
+
 ps_xgb <- makeParamSet(
          #makeDiscreteParam("booster",values = c("gbtree","gblinear", "dart")),
          makeIntegerParam("max_depth",lower = 1L,upper = 10L),
@@ -231,7 +234,7 @@ ps_xgb <- makeParamSet(
          
 )
 
-ctrl <- makeTuneControlGenSA(budget = 50)
+ctrl <- makeTuneControlGenSA(budget = 50, maxit = 50, max.time = 300)
 
 parallelStart()
 
@@ -239,7 +242,7 @@ Carseats_xgb_tune <-
   tuneParams(
     learner = lrn_xgb_tune,
     task = createDummyFeatures(tsk_Carseats),
-    resampling = rdesc_CV10,
+    resampling = rdesc_CV5,
     measures = mape,
     par.set = ps_xgb,
     control = ctrl,
