@@ -20,8 +20,6 @@ library(parallelMap) # Parallel computation
 library(rpart.plot) # Visualization of rpart trees
 library(ISLR) # Carseats dataset
 library(tidyverse) # Data visualization and transformation
-library(ggfortify) # Diagnostic plots for lm
-library(GGally) # SPLOM
 ```
 
 
@@ -219,7 +217,6 @@ lrn_xgboost %>%
 tune xgboost
 ```{r}
 set.seed(123, "L'Ecuyer")
-
 lrn_xgboost_tune <- makeLearner("regr.xgboost")
 
 rdesc_CV5 <- makeResampleDesc(method = "CV", 
@@ -239,30 +236,20 @@ ps_xgb <- makeParamSet(
 
 ctrl <- makeTuneControlGenSA(budget = 50, maxit = 50, max.time = 300)
 
+parallelStart()
 
-fname <- "xgboost_tune_CS.RDS"
+xgboost_tune_CS <- 
+  tuneParams(
+    learner = lrn_xgboost_tune,
+    task = createDummyFeatures(tsk_Carseats),
+    resampling = rdesc_CV5,
+    measures = mape,
+    par.set = ps_xgb,
+    control = ctrl,
+    show.info = T
+  )
 
-if (file.exists(fname)) {
-  xgboost_tune_CS <- readRDS(fname)
-} else {
-  parallelStart()
-
-  xgboost_tune_CS <- 
-    tuneParams(
-      learner = lrn_xgboost_tune,
-      task = createDummyFeatures(tsk_Carseats),
-      resampling = rdesc_CV5,
-      measures = mape,
-      par.set = ps_xgb,
-      control = ctrl,
-      show.info = T
-    )
-
-  parallelStop()
-  saveRDS(xgboost_tune_CS, file = fname)
-}
-
-
+parallelStop()
 ```
 
 ```{r}
@@ -499,29 +486,20 @@ ps_xgb_quadratic <- makeParamSet(
          makeNumericParam("eta",lower = 0.1,upper = 0.5)
 )
 
+parallelStart()
 
-fname <- "xgboost_tune_quadratic.RDS"
+xgboost_tune_quadratic <- 
+  tuneParams(
+    learner = lrn_xgboost_tune,
+    task = tsk_quadratic,
+    resampling = rdesc_CV5,
+    measures = mape,
+    par.set = ps_xgb_quadratic,
+    control = ctrl_quadratic,
+    show.info = T
+  )
 
-if (file.exists(fname)) {
-  xgboost_tune_quadratic <- readRDS(fname)
-} else {
-  parallelStart()
-  
-  xgboost_tune_quadratic <- 
-    tuneParams(
-      learner = lrn_xgboost_tune,
-      task = tsk_quadratic,
-      resampling = rdesc_CV5,
-      measures = mape,
-      par.set = ps_xgb_quadratic,
-      control = ctrl_quadratic,
-      show.info = T
-    )
-  
-  parallelStop()
-  
-  saveRDS(xgboost_tune_quadratic, file = fname)
-}
+parallelStop()
 
 ```
 
@@ -572,252 +550,5 @@ makeLearner("regr.gbm",
   geom_line(aes(y = response), color = 'red')
 
 
-
-```
-
-
-
-
-```{r}
-data(Boston)
-head(Boston)
-```
-
-```{r, message=F, warning=F}
-ggpairs(Boston)
-```
-
-```{r}
-m_boston_full <- lm(medv ~ . + I(lstat^2)+ I(crim^2), data = Boston)
-summary(m_boston_full)
-```
-
-
-```{r}
-autoplot(m_boston_full)
-```
-
-```{r}
-tsk_Boston <- makeRegrTask(id = "Boston Housing", target = "medv", data = Boston)
-tsk_Boston_Poly <- 
-  Boston %>% 
-  mutate(lstat2 = lstat^2, crim2 = crim^2) %>%
-  makeRegrTask(id = "Boston Housing", target = "medv", data = .)
-
-```
-
-```{r}
-# Setting the random number generator for reproducibility
-set.seed(123, "L'Ecuyer")
-
-# Detecting the number of avaliable CPU cores
-num_cores <- parallel::detectCores()
-
-# Starting parallelization
-parallelStartSocket(num_cores)
-
-bench_Boston_baseline <-  
-  tsk_Boston_Poly %>%
-  benchmark(learners = list(lrn_mlr, lrn_lasso),
-            tasks = .,
-            resampling = rdesc_CV10,
-          measures = ms_regr,
-         show.info = TRUE)
-
-parallelStop()
-
-```
-
-
-```{r}
-bench_Boston_baseline %>%
-  printBenchmark()
-```
-
-
-
-
-Tree-based learners
-```{r}
-lrn_rpart <- makeLearner("regr.rpart", id = "rpart")
-lrn_ctree <- makeLearner("regr.ctree", id = "ctree")
-```
-
-
-
-```{r}
-# Setting the random number generator for reproducibility
-set.seed(123, "L'Ecuyer")
-
-# Starting parallelization
-parallelStartSocket(num_cores)
-
-bench_Boston_Trees <-  
-  tsk_Boston %>%
-  benchmark(learners = list(lrn_rpart, lrn_ctree),
-            tasks = .,
-            resampling = rdesc_CV10,
-          measures = ms_regr,
-         show.info = TRUE)
-
-parallelStop()
-
-```
-
-```{r}
-bench_Boston_Trees %>%
-  printBenchmark()
-```
-
-
-```{r}
-tsk_Boston_Dummy <- tsk_Boston %>% createDummyFeatures()
-
-lrn_bagging_Boston <- 
-  makeLearner("regr.randomForest", 
-              id="Bagging (via RF)", 
-              mtry = getTaskNFeats(tsk_Boston_Dummy))
-
-lrn_RF_Boston <- 
-  makeLearner("regr.randomForest", 
-              id="RandomForest")
-
-
-lrn_ranger_Boston <- 
-  makeLearner("regr.ranger", 
-              id="ranger")
-
-lrn_cforest_Boston <- 
-  makeLearner("regr.cforest", 
-              id="cforest")
-
-
-lrn_gbm_Boston <- 
-  makeLearner("regr.gbm", 
-              id="gbm")
-
-
-lrn_xgboost_Boston <- 
-  makeLearner("regr.xgboost", 
-              id="xgboost")
-
-
-```
-
-
-```{r}
-# Setting the random number generator for reproducibility
-set.seed(123, "L'Ecuyer")
-
-# Starting parallelization
-parallelStartSocket(num_cores)
-
-bench_Boston_ensembles <-  
-  tsk_Boston_Dummy %>%
-  benchmark(learners = list(lrn_bagging_Boston, lrn_RF_Boston, 
-                            lrn_ranger_Boston, lrn_gbm_Boston, 
-                            lrn_xgboost_Boston),
-            tasks = .,
-            resampling = rdesc_CV10,
-          measures = ms_regr,
-         show.info = TRUE)
-
-parallelStop()
-
-bench_Boston_ensembles %>%
-  printBenchmark()
-
-```
-
-
-
-```{r}
-lrn_xgboost %>%
-  getLearnerParamSet()
-```
-
-
-
-
-
-tune xgboost
-```{r}
-set.seed(123, "L'Ecuyer")
-
-lrn_xgboost_tune <- makeLearner("regr.xgboost")
-
-rdesc_CV5 <- makeResampleDesc(method = "CV", 
-                                   iter = 5)
-
-ps_xgb <- makeParamSet(
-         #makeDiscreteParam("booster",values = c("gbtree","gblinear", "dart")),
-         makeIntegerParam("max_depth",lower = 1L,upper = 10L),
-         makeIntegerParam("nrounds",lower = 1L,upper = 200L),
-         makeNumericParam("min_child_weight",lower = 1L,upper = 10L),
-         makeNumericParam("subsample",lower = 0.5,upper = 1),
-         makeNumericParam("colsample_bytree",lower = 0.5,upper = 1),  
-         makeNumericParam("lambda",lower = -1,upper = 2, trafo = function(x){10^x}),
-         makeNumericParam("eta",lower = 0.1,upper = 0.5)
-         
-)
-
-ctrl <- makeTuneControlGenSA(budget = 50, maxit = 50, max.time = 300)
-
-
-fname <- "xgboost_tune_Boston.RDS"
-
-if (file.exists(fname)) {
-  xgboost_tune_Boston <- readRDS(fname)
-} else {
-  parallelStart()
-
-  xgboost_tune_Boston <- 
-    tuneParams(
-      learner = lrn_xgboost_tune,
-      task = tsk_Boston_Dummy,
-      resampling = rdesc_CV5,
-      measures = mape,
-      par.set = ps_xgb,
-      control = ctrl,
-      show.info = T
-    )
-
-  parallelStop()
-  saveRDS(xgboost_tune_Boston, file = fname)
-}
-
-
-```
-
-```{r}
-xgboost_tune_Boston$y
-xgboost_tune_Boston$x
-```
-
-```{r}
-lrn_xgboost_tuned_Boston <- 
-  lrn_xgboost_tune %>%
-  setHyperPars(par.vals = xgboost_tune_Boston$x)
-
-
-
-# Setting the random number generator for reproducibility
-set.seed(123, "L'Ecuyer")
-
-# Starting parallelization
-parallelStartSocket(num_cores)
-
-bench_Boston_ensembles <-  
-  tsk_Boston_Dummy %>%
-  benchmark(learners = list(lrn_xgboost_Boston, lrn_xgboost_tuned_Boston),
-            tasks = .,
-            resampling = rdesc_CV10,
-          measures = ms_regr,
-         show.info = TRUE)
-
-parallelStop()
-
-bench_Boston_ensembles %>%
-  printBenchmark()
 
 ```
