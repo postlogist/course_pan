@@ -217,7 +217,7 @@ lrn_xgboost %>%
 tune xgboost
 ```{r}
 set.seed(123, "L'Ecuyer")
-lrn_xgb_tune <- makeLearner("regr.xgboost")
+lrn_xgboost_tune <- makeLearner("regr.xgboost")
 
 rdesc_CV5 <- makeResampleDesc(method = "CV", 
                                    iter = 5)
@@ -238,9 +238,9 @@ ctrl <- makeTuneControlGenSA(budget = 50, maxit = 50, max.time = 300)
 
 parallelStart()
 
-Carseats_xgb_tune <- 
+xgboost_tune_CS <- 
   tuneParams(
-    learner = lrn_xgb_tune,
+    learner = lrn_xgboost_tune,
     task = createDummyFeatures(tsk_Carseats),
     resampling = rdesc_CV5,
     measures = mape,
@@ -252,6 +252,39 @@ Carseats_xgb_tune <-
 parallelStop()
 ```
 
+```{r}
+xgboost_tune_CS$y
+xgboost_tune_CS$x
+```
+
+```{r}
+lrn_xgboost_tuned_CS <- 
+  lrn_xgboost_tune %>%
+  setHyperPars(par.vals = xgboost_tune_CS$x)
+
+
+
+# Setting the random number generator for reproducibility
+set.seed(123, "L'Ecuyer")
+
+# Starting parallelization
+parallelStartSocket(num_cores)
+
+bench_Carseats_ensembles <-  
+  tsk_Carseats %>%
+  createDummyFeatures() %>% # xgboost doesn't support factors
+  benchmark(learners = list(lrn_xgboost, lrn_xgboost_tuned_CS),
+            tasks = .,
+            resampling = rdesc_CV10,
+          measures = ms_regr,
+         show.info = TRUE)
+
+parallelStop()
+
+bench_Carseats_ensembles %>%
+  printBenchmark()
+
+```
 
 
 
@@ -436,6 +469,66 @@ makeLearner("regr.xgboost",
 
 
 ```
+
+```{r}
+# Setting the random number generator for reproducibility
+set.seed(123, "L'Ecuyer")
+
+ctrl_quadratic <- makeTuneControlGenSA(budget = 50, maxit = 50, max.time = 300)
+
+
+ps_xgb_quadratic <- makeParamSet(
+         makeIntegerParam("max_depth",lower = 1L,upper = 20L),
+         makeIntegerParam("nrounds",lower = 1L,upper = 200L),
+         makeNumericParam("min_child_weight",lower = 1L,upper = 100L),
+         makeNumericParam("subsample",lower = 0.5, upper = 1),
+         makeNumericParam("lambda",lower = -1, upper = 2, trafo = function(x){10^x}),
+         makeNumericParam("eta",lower = 0.1,upper = 0.5)
+)
+
+parallelStart()
+
+xgboost_tune_quadratic <- 
+  tuneParams(
+    learner = lrn_xgboost_tune,
+    task = tsk_quadratic,
+    resampling = rdesc_CV5,
+    measures = mape,
+    par.set = ps_xgb_quadratic,
+    control = ctrl_quadratic,
+    show.info = T
+  )
+
+parallelStop()
+
+```
+
+
+```{r}
+xgboost_tune_quadratic$y
+xgboost_tune_quadratic$x
+
+```
+
+
+```{r}
+set.seed(123)
+lrn_xgboost_tune %>%
+  setHyperPars(par.vals = xgboost_tune_quadratic$x) %>%
+  train(learner = ., 
+        task = tsk_quadratic) %>%
+  predict(tsk_quadratic) %>%
+  as.data.frame() %>%
+  cbind(quadratic) %>%
+  ggplot(aes(x)) +
+  geom_point(aes(y = truth), alpha = 0.1) +
+  stat_function(fun = true_f, color = 'blue') +
+  geom_line(aes(y = response), color = 'red')
+
+```
+
+
+
 
 ```{r}
 lrn_gbm %>% getLearnerParamSet()
