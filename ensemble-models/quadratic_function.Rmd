@@ -1,0 +1,413 @@
+---
+title: "Demonstration of model performance on a quadratic function"
+author: "Zakhodyakin Gleb"
+date: "08 10 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r Loading packages, message=FALSE, warning=FALSE}
+library(mlr) # Machine Learning framework for R
+library(stringr) # string processing
+library(parallelMap) # Parallel computation
+library(rpart.plot) # Visualization of rpart trees
+library(tidyverse) # Data visualization and transformation
+```
+
+# Introduction
+
+This notebook demonstrates how different models perform on a simple quadratic function.
+
+Data is generated using the model:
+
+$$ y = (x - 10)^2 + N(0, 5) $$
+
+```{r}
+set.seed(123)
+
+true_f <- function(x) {
+  (x - 10)^2
+}
+
+quadratic <- 
+  tibble(
+    x = seq(0, 20, by = 0.01)
+  ) %>%
+  mutate(
+    y =  true_f(x)+ rnorm(2001, sd = 5)
+  )
+
+ggplot(quadratic, aes(x, y)) +
+  geom_point(alpha = 0.1) +
+  stat_function(fun = true_f, color = 'lightSkyBlue', lwd = 2)
+```
+
+
+# Polynomial regression
+
+Since we know that the functional form of the true $f(x)$ is polynomial, we can approximate it using the polynomial regression.
+
+Here we create a learning task for MLR. Since the package can't automatically include polynomial terms, we'll add the $x^2$ term to the data table manually.
+
+```{r}
+tsk_quadratic_poly <- quadratic %>%
+  mutate(x2 = x^2) %>%
+  makeRegrTask(id = "Quadratic Function with Polynomial terms", 
+                              data = .,
+                              target = "y")
+```
+
+Now we create a learner based on the multiple linear regression model:
+
+```{r}
+lrn_mlr <- makeLearner("regr.lm", id = "mlr")
+```
+
+
+To benchmark model performance, we need to define a list of metrics to calculate:
+
+```{r}
+# A list of model performance metrics for regression
+ms_regr = list(mape, timetrain, mae, rmse, rsq)
+```
+
+
+and a resampling strategy, which will be 10 fold cross validation:
+
+
+```{r}
+rdesc_CV10 <- makeResampleDesc(method = "CV", 
+                                   iter = 10)
+```
+
+
+
+As a preparatory step, we detect the number of available CPU cores and define a helper function to print the benchmarking results in a table.
+
+```{r}
+
+# Detecting the number of avaliable CPU cores
+num_cores <- parallel::detectCores()
+
+# Function for printing benchmark results ordered by MAPE
+printBenchmark <- function(benchmarkResults) {
+  benchmarkResults %>%
+  getBMRAggrPerformances(as.df = TRUE) %>%
+  arrange(mape.test.mean) %>%
+  dplyr::select(-task.id) %>%
+  mutate_if(is.numeric, round, digits = 3)
+}
+
+```
+
+Now we can benchmark our model's performance.
+
+```{r}
+# Setting the random number generator for reproducibility
+set.seed(123, "L'Ecuyer")
+
+# Starting parallelization
+parallelStartSocket(num_cores)
+
+bench_quadratic_mlr <-  
+  lrn_mlr %>%
+  benchmark(learners = .,
+            tasks = tsk_quadratic_poly,
+            resampling = rdesc_CV10,
+          measures = ms_regr,
+         show.info = TRUE)
+
+parallelStop()
+
+```
+
+
+```{r}
+bench_quadratic_mlr %>%
+  printBenchmark()
+```
+
+
+Let's compare the predicted and the actual values using the polynomial regression model.
+
+To simplify further comparisons, we'll create a helper function that will do model training and plotting.
+
+```{r}
+
+try_model <- function(learner, task) {
+  
+  train(learner,task) %>% # training the specified learner
+  predict(task) %>% # predicting
+  as.data.frame() %>% # extracting results as a data frame
+  cbind(getTaskData(task)) %>% # adding the data frame with predictors
+  ggplot(aes(x)) +
+  geom_point(aes(y = truth), alpha = 0.1) +
+  stat_function(fun = true_f, color = 'lightSkyBlue', lwd = 2) +
+  geom_line(aes(y = response), color = 'red') +
+  labs(title = paste("Predictions from", getLearnerId(learner)),
+       y = "response")
+
+}
+
+```
+
+
+```{r}
+try_model(lrn_mlr, tsk_quadratic_poly)
+
+```
+
+
+As we can see, the model is almost identical to the true $f(x)$.
+
+
+# Tree - based models
+
+In this section we consider two tree-based models - rpart and ctree.
+Both models will use the original data, without the added polynomial term.
+
+## CART algorithm (rpart)
+
+```{r}
+tsk_quadratic <- makeRegrTask(id = "Quadratic Function", 
+                              data = quadratic,
+                              target = "y")
+```
+
+Here we'll compare the estimated $f(x)$ to the actual one visually.
+
+First, let's try the default values for the parameters.
+
+```{r}
+
+makeLearner("regr.rpart", id = "rpart") %>%
+  try_model(tsk_quadratic)
+
+```
+
+
+The algorithm has approximated the non-linear character of  $f(x)$, but the approximation is very rough. By changing the algorithm's parameters controlling the complexity, we can get better results.
+
+
+```{r}
+makeLearner("regr.rpart", id = "rpart",
+            minsplit = 30, cp = 0.0001) %>%
+  
+  try_model(tsk_quadratic)
+
+```
+
+This is better, but we can get too far and overfit:
+
+
+```{r}
+makeLearner("regr.rpart", id = "rpart",
+            minsplit = 10, cp = 0.00005) %>%
+  
+  try_model(tsk_quadratic)
+
+```
+
+## Conditional Inference Tree (ctree)
+
+The ctree algorithm couldn't fit the data properly:
+
+```{r}
+makeLearner("regr.ctree", id = "ctree") %>%
+  try_model(tsk_quadratic)
+
+```
+
+Tuning the parameters didn't help, until the polynomial dataset was provided:
+
+```{r}
+makeLearner("regr.ctree", id = "ctree") %>%
+  try_model(tsk_quadratic_poly)
+```
+
+
+# Ensemble models
+
+Let's try a few ensemble-based models.
+
+## Bagging/Random Forest
+
+The idea behind bagging is replacing a single model with an ensemble of models training on the resampled data. Each model gets a different training dataset, resampled from the initial training data. Predictions are made by averaging the predicted responses from all trees in the ensemble. Such prediction is expected to be more robust compared to a single tree. The random forest further develops this idea by increasing the diversity of trees consisting an ensemble. This is achieved by randomly selecting a subset of predictors before training a new tree.
+In our example we have just one predictor, so only the bagging approach is feasible. Here we use the randomForest package, that implements both approaches.
+
+
+```{r}
+makeLearner("regr.randomForest", id = "Bagging",
+             mtry = 1 # the number of predictors to consider for each tree
+) %>%
+  try_model(tsk_quadratic)
+```
+
+The model is overfit.
+
+
+
+```{r}
+makeLearner("regr.randomForest", id = "Bagging",
+            mtry = 1, # the number of predictors to consider for each tree
+            nodesize = 150 # minimum node size for a tree
+) %>%
+  try_model(tsk_quadratic)
+
+```
+
+
+## Gradient Boosting Machine
+
+Boosting is another ensemble-based approach. In contrast to bagging, the trees are produced sequentially. 
+Each tree is trained on the residuals from the previous tree.
+
+
+
+```{r}
+makeLearner("regr.gbm", id = "Gradient Boosting Machine") %>%
+  try_model(task = tsk_quadratic)
+```
+
+The model fits the data well except around the minimum point of the parabola.
+
+Let's try adjusting the parameters:
+
+```{r}
+makeLearner("regr.gbm", id = "Gradient Boosting Machine, tuned",
+            n.trees = 3500, # Number of trees in the ensemble
+            shrinkage = 0.01 # learning rate
+) %>%
+  try_model(task = tsk_quadratic)
+```
+
+```{r}
+makeLearner("regr.gbm") %>%
+  getLearnerParamSet()
+```
+
+
+## XGBoost
+
+Extreme gradient boosting is a popular algorithm also employing the boosting idea. It has built-in regularization to prevent overfitting.
+
+
+```{r}
+makeLearner("regr.xgboost", id = "xgboost") %>%
+  try_model(tsk_quadratic)
+```
+
+With default parameters, the algorithm couldn't fit $f(x)$.
+
+
+```{r}
+makeLearner("regr.xgboost") %>%
+  getLearnerParamSet()
+  
+```
+
+
+
+By adjusting the parameters, we can get better results:
+
+
+```{r}
+makeLearner("regr.xgboost", id = "xgboost, adjusted",
+            eta = 0.02, #learning rate
+            nrounds = 2000, # number of trees
+            max_depth = 1 # maximum depth of a tree
+            ) %>%
+  try_model(tsk_quadratic)
+```
+
+
+
+
+## Tuning the parameters for xgboost
+
+
+Setting the parameter search space:
+
+```{r}
+ps_xgb_quadratic <- makeParamSet(
+         makeIntegerParam("max_depth",lower = 1L,upper = 6L),
+         makeIntegerParam("nrounds",lower = 1L,upper = 4000L),
+         makeNumericParam("min_child_weight",lower = 1L,upper = 100L),
+         makeNumericParam("subsample",lower = 0.5, upper = 1),
+         #makeNumericParam("lambda",lower = -1, upper = 2, trafo = function(x){10^x}),
+         makeNumericParam("gamma",lower = -5, upper = 1, trafo = function(x){10^x}),
+         makeNumericParam("eta",lower = -3, upper = -1, trafo = function(x){10^x}))
+
+```
+
+
+Selecting the search algorithm (here we use simulated annealing):
+
+```{r}
+ctrl_quadratic <- 
+  makeTuneControlGenSA(budget = 50, maxit = 50, max.time = 300)
+
+```
+
+Creating resample description for CV with only 5 folds to speed up search.
+
+```{r}
+rdesc_CV5 <- makeResampleDesc(method = "CV", 
+                                   iter = 5)
+```
+
+
+Running the search. The results will be cached, to prevent long report knitting time.
+
+
+```{r}
+# Setting the random number generator for reproducibility
+set.seed(123, "L'Ecuyer")
+
+fname <- "xgboost_tune_quadratic.RDS"
+
+if (file.exists(fname)) {
+  xgboost_tune_quadratic <- readRDS(fname)
+} else {
+  parallelStart()
+  
+  xgboost_tune_quadratic <- 
+    tuneParams(
+      learner = makeLearner("regr.xgboost"),
+      task = tsk_quadratic,
+      resampling = rdesc_CV5,
+      measures = mape,
+      par.set = ps_xgb_quadratic,
+      control = ctrl_quadratic,
+      show.info = T
+    )
+  
+  parallelStop()
+  
+  saveRDS(xgboost_tune_quadratic, file = fname)
+}
+
+```
+
+Optimized parameter values:
+
+```{r}
+xgboost_tune_quadratic$y
+xgboost_tune_quadratic$x
+
+```
+
+
+
+
+```{r}
+makeLearner("regr.xgboost", id = "xgboost, optimized") %>%
+  setHyperPars(par.vals = xgboost_tune_quadratic$x) %>%
+  try_model(tsk_quadratic)
+```
+
+
