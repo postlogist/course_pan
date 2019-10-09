@@ -373,7 +373,7 @@ fname <- "xgboost_tune_quadratic.RDS"
 if (file.exists(fname)) {
   xgboost_tune_quadratic <- readRDS(fname)
 } else {
-  parallelStart()
+  parallelStartSocket(num_cores)
   
   xgboost_tune_quadratic <- 
     tuneParams(

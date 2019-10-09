@@ -357,7 +357,7 @@ fname <- "xgboost_tune_Boston.RDS"
 if (file.exists(fname)) {
   xgboost_tune_Boston <- readRDS(fname)
 } else {
-  parallelStart()
+  parallelStartSocket(num_cores)
 
   xgboost_tune_Boston <- 
     tuneParams(
