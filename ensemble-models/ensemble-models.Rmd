@@ -1,5 +1,5 @@
 ---
-title: "Ensemble models"
+title: "Building and tuning ensemble models with MLR. Boston housing example."
 author: "Gleb Zakhodyakin, postlogist@gmail.com"
 date: '`r format(Sys.time(), "%d.%m.%Y")`'
 output: 
@@ -10,6 +10,7 @@ output:
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+options(width = 100) #adjust the width of text output for large tables
 ```
 
 ```{r Loading packages, message=FALSE, warning=FALSE}
@@ -18,72 +19,122 @@ library(mlr) # Machine Learning framework for R
 library(stringr) # string processing
 library(parallelMap) # Parallel computation
 library(rpart.plot) # Visualization of rpart trees
-library(ISLR) # Carseats dataset
 library(tidyverse) # Data visualization and transformation
 library(ggfortify) # Diagnostic plots for lm
 library(GGally) # SPLOM
 ```
 
 
+# Introduction
+
+This tutorial shows how to build and to tune parameters for ensemble models using the mlr framework. 
+We'll compare the performance of different types of regression models in the task of predicting median house price in Boston.
+
+
+# Exploring the data
+Loading the Boston dataset. See ?Boston
+
 ```{r}
-data("Carseats")
-Carseats <- 
-  Carseats %>%
-  filter(Sales > 0) #Filter out zero sales to prevent issues with computing MAPE
+data(Boston)
+head(Boston)
+```
 
-head(Carseats)
+A quick look on the variable correlations:
 
+```{r, message=F, warning=F, fig.width=10, fig.height=10}
+ggpairs(Boston)
+```
+
+```{r, fig.width=10, fig.height=7, message=F, warning=F}
+Boston %>% gather(key = 'variable', value = 'value', -medv) %>%
+  ggplot(aes(value, medv)) +
+  geom_point(alpha = 0.1) +
+  geom_smooth(se = F) +
+  facet_wrap(~variable, scales = "free_x", ncol = 3) +
+  labs(x = NULL)
+```
+
+From the plots we can see, that some variables have a non-linear relationship to the target variable `medv`.
+We can incorporate them into the regression model by adding non-linear terms.
+
+A quadratic term might be useful for `black`, `crim`, `indus`, `lstat`, `rm` variables. `dis` might require a square root or logarithmic term.
+
+
+
+```{r}
+m_boston_full <- lm(medv ~ . + I(black^2)+ I(crim^2) + I(indus^2) +
+                      I(lstat^2)  + I(rm^2) + sqrt(dis),
+                    , data = Boston)
+summary(m_boston_full)
 ```
 
 
 ```{r}
-Carseats %>%
-  ggplot(aes(Advertising, Sales, color = ShelveLoc)) +
-  geom_point() +
-  geom_smooth(method = "lm", se = F)
+autoplot(m_boston_full)
 ```
+
+There's still some non-linearity in the residuals, as well as a strange trail of points at the right hand side,
+but overall the model fits quite good. Some variables are not significant. We can deal with this later using variable selection techniques such as Lasso.
+
+
+# Building and comparing the models with mlr
+
+## Multiple regression and Lasso
+
+First, we create a learning task for multiple regression. We need to add the non-linear terms as separate variables
 
 
 ```{r}
-m_reg_full <- lm(Sales ~ ., data = Carseats)
-m_reg_stepwise <- stepAIC(m_reg_full, direction = "both", trace = FALSE)
-summary(m_reg_stepwise)
+tsk_Boston_Poly <- 
+  Boston %>% 
+  mutate(black2 = black^2,
+         crim2 = crim^2,
+         indus2 = indus^2,
+         lstat2 = lstat^2,
+         rm2 = rm^2,
+         sqrtdis = sqrt(dis)) %>%
+  makeRegrTask(id = "Boston Housing (with polynomials)", target = "medv", data = .)
+
 ```
 
 
-
-
+Next, we create two regression-based learners:
 
 ```{r}
-tsk_Carseats <- makeRegrTask("Multiple Regression", data = Carseats, target = "Sales")
-```
-
-
-Baseline - multiple regression
-```{r}
+# Multiple regression
 lrn_mlr <- makeLearner("regr.lm", id = "mlr")
-```
 
-
-Baseline - Lasso regression
-
-```{r}
+# Lasso regression
 lrn_lasso <- makeLearner("regr.glmnet", id = "Lasso")
 ```
 
 
-
-```{r}
-rdesc_CV10 <- makeResampleDesc(method = "CV", 
-                                   iter = 10)
-```
-
-
+Creating a list of performance metrics:
 
 ```{r}
 # A list of model performance metrics for regression
-ms_regr = list(mape, timetrain, mae, rmse, rsq)
+ms_regr = list(mape, mse, timetrain, mae, rmse, rsq)
 ```
+
+
+Creating a resampling description for 10-fold cross-validation:
+
+```{r}
+rdesc_CV10 <- 
+  makeResampleDesc(method = "CV", iter = 10)
+```
+
+
+Detecting the number of available CPU cores
+```{r}
+# Detecting the number of avaliable CPU cores
+num_cores <- parallel::detectCores()
+```
+
+
+
+Now we can benchmark the models:
+
 
 
 
@@ -91,16 +142,13 @@ ms_regr = list(mape, timetrain, mae, rmse, rsq)
 # Setting the random number generator for reproducibility
 set.seed(123, "L'Ecuyer")
 
-# Detecting the number of avaliable CPU cores
-num_cores <- parallel::detectCores()
-
 # Starting parallelization
 parallelStartSocket(num_cores)
 
-bench_Carseats_baseline <-  
-  tsk_Carseats %>%
-  benchmark(learners = list(lrn_mlr, lrn_lasso),
-            tasks = .,
+bench_Boston_Baseline <-  
+  list(lrn_mlr, lrn_lasso) %>%
+  benchmark(learners = .,
+            tasks = tsk_Boston_Poly,
             resampling = rdesc_CV10,
           measures = ms_regr,
          show.info = TRUE)
@@ -110,8 +158,10 @@ parallelStop()
 ```
 
 
+Here we define a helper function to automatically print benchmarks sorted by MAPE.
 
-```{r}
+
+```{r Helper function to print benchmarks}
 printBenchmark <- function(benchmarkResults) {
   benchmarkResults %>%
   getBMRAggrPerformances(as.df = TRUE) %>%
@@ -122,522 +172,26 @@ printBenchmark <- function(benchmarkResults) {
 ```
 
 
+
 ```{r}
-bench_Carseats_baseline %>%
+bench_Boston_Baseline %>%
   printBenchmark()
 ```
 
 
-Tree-based learners
-```{r}
-lrn_rpart <- makeLearner("regr.rpart", id = "rpart")
-lrn_ctree <- makeLearner("regr.ctree", id = "ctree")
-```
+## Tree-based models
 
+Now we compare two tree-based models - CART and Conditional Inference Tree.
+These models will be trained on the original dataset, since trees can learn non-linear relationships automatically.
 
-
-```{r}
-# Setting the random number generator for reproducibility
-set.seed(123, "L'Ecuyer")
-
-# Starting parallelization
-parallelStartSocket(num_cores)
-
-bench_Carseats_trees <-  
-  tsk_Carseats %>%
-  benchmark(learners = list(lrn_rpart, lrn_ctree),
-            tasks = .,
-            resampling = rdesc_CV10,
-          measures = ms_regr,
-         show.info = TRUE)
-
-parallelStop()
-
-```
-
-```{r}
-bench_Carseats_trees %>%
-  printBenchmark()
-```
-
-
-Bagging
-
-```{r}
-
-tsk_Carseats %>% createDummyFeatures()
-
-lrn_rf <- makeLearner("regr.randomForest", id="Random Forest", mtry = 4, ntree = 50)
-
-lrn_bagging <- makeLearner("regr.randomForest", id="Bagging (via RF)", mtry = 20, ntree = 50)
-lrn_ranger <- makeLearner("regr.ranger", id="ranger", mtry = 4, num.trees = 50)
-
-
-```
-
-```{r}
-lrn_gbm <- makeLearner("regr.gbm", id="gbm", n.trees = 100)
-
-lrn_gbm %>% getLearnerParamSet()
-```
-
-```{r}
-lrn_xgboost <- makeLearner("regr.xgboost", id="xgboost", nrounds = 100)
-#lrn_xgboost %>% getLearnerParamSet()
-```
-
-
-```{r}
-# Setting the random number generator for reproducibility
-set.seed(123, "L'Ecuyer")
-
-# Starting parallelization
-parallelStartSocket(num_cores)
-
-bench_Carseats_ensembles <-  
-  tsk_Carseats %>%
-  createDummyFeatures() %>% # xgboost doesn't support factors
-  benchmark(learners = list(lrn_bagging, lrn_rf, lrn_ranger, lrn_gbm, lrn_xgboost),
-            tasks = .,
-            resampling = rdesc_CV10,
-          measures = ms_regr,
-         show.info = TRUE)
-
-parallelStop()
-
-bench_Carseats_ensembles %>%
-  printBenchmark()
-
-```
-
-```{r}
-lrn_xgboost %>%
-  getLearnerParamSet()
-```
-
-
-tune xgboost
-```{r}
-set.seed(123, "L'Ecuyer")
-
-lrn_xgboost_tune <- makeLearner("regr.xgboost")
-
-rdesc_CV5 <- makeResampleDesc(method = "CV", 
-                                   iter = 5)
-
-ps_xgb <- makeParamSet(
-         #makeDiscreteParam("booster",values = c("gbtree","gblinear", "dart")),
-         makeIntegerParam("max_depth",lower = 1L,upper = 10L),
-         makeIntegerParam("nrounds",lower = 1L,upper = 200L),
-         makeNumericParam("min_child_weight",lower = 1L,upper = 10L),
-         makeNumericParam("subsample",lower = 0.5,upper = 1),
-         makeNumericParam("colsample_bytree",lower = 0.5,upper = 1),  
-         makeNumericParam("lambda",lower = -1,upper = 2, trafo = function(x){10^x}),
-         makeNumericParam("eta",lower = 0.1,upper = 0.5)
-         
-)
-
-ctrl <- makeTuneControlGenSA(budget = 50, maxit = 50, max.time = 300)
-
-
-fname <- "xgboost_tune_CS.RDS"
-
-if (file.exists(fname)) {
-  xgboost_tune_CS <- readRDS(fname)
-} else {
-  parallelStart()
-
-  xgboost_tune_CS <- 
-    tuneParams(
-      learner = lrn_xgboost_tune,
-      task = createDummyFeatures(tsk_Carseats),
-      resampling = rdesc_CV5,
-      measures = mape,
-      par.set = ps_xgb,
-      control = ctrl,
-      show.info = T
-    )
-
-  parallelStop()
-  saveRDS(xgboost_tune_CS, file = fname)
-}
-
-
-```
-
-```{r}
-xgboost_tune_CS$y
-xgboost_tune_CS$x
-```
-
-```{r}
-lrn_xgboost_tuned_CS <- 
-  lrn_xgboost_tune %>%
-  setHyperPars(par.vals = xgboost_tune_CS$x)
-
-
-
-# Setting the random number generator for reproducibility
-set.seed(123, "L'Ecuyer")
-
-# Starting parallelization
-parallelStartSocket(num_cores)
-
-bench_Carseats_ensembles <-  
-  tsk_Carseats %>%
-  createDummyFeatures() %>% # xgboost doesn't support factors
-  benchmark(learners = list(lrn_xgboost, lrn_xgboost_tuned_CS),
-            tasks = .,
-            resampling = rdesc_CV10,
-          measures = ms_regr,
-         show.info = TRUE)
-
-parallelStop()
-
-bench_Carseats_ensembles %>%
-  printBenchmark()
-
-```
-
-
-
-Quadratic data
-
-```{r}
-set.seed(123)
-
-true_f <- function(x) {
-  (x - 10)^2
-}
-
-quadratic <- 
-  tibble(
-    x = seq(0, 20, by = 0.01)
-  ) %>%
-  mutate(
-    y =  true_f(x)+ rnorm(2001, sd = 5)
-  )
-
-ggplot(quadratic, aes(x, y)) +
-  geom_point(alpha = 0.1) +
-  geom_smooth() +
-  stat_function(fun = true_f, color = 'red')
-```
-
-
-
-
-```{r}
-tsk_quadratic <- makeRegrTask(id = "Quadratic Function", 
-                              data = quadratic,
-                              target = "y")
-
-tsk_quadratic_poly <- quadratic %>%
-  mutate(x2 = x^2) %>%
-  makeRegrTask(id = "Quadratic Function with Polynomial terms", 
-                              data = .,
-                              target = "y")
-  
-```
-
-
-```{r}
-# Setting the random number generator for reproducibility
-set.seed(123, "L'Ecuyer")
-
-# Starting parallelization
-parallelStartSocket(num_cores)
-
-bench_quadratic_baseline <-  
-  tsk_quadratic_poly %>%
-  benchmark(learners = list(lrn_mlr, lrn_lasso),
-            tasks = .,
-            resampling = rdesc_CV10,
-          measures = ms_regr,
-         show.info = TRUE)
-
-parallelStop()
-
-```
-
-
-```{r}
-bench_quadratic_baseline %>%
-  printBenchmark()
-```
-
-
-```{r}
-lrn_mlr %>%
-  train(learner = ., 
-        task = tsk_quadratic_poly) %>%
-  predict(tsk_quadratic_poly) %>%
-  as.data.frame() %>%
-  cbind(quadratic) %>%
-  ggplot(aes(x)) +
-  geom_point(aes(y = truth), alpha = 0.1) +
-  stat_function(fun = true_f, color = 'blue') +
-  geom_line(aes(y = response), color = 'red')
-
-```
-
-
-```{r}
-lrn_lasso %>%
-  train(learner = ., 
-        task = tsk_quadratic_poly) %>%
-  predict(tsk_quadratic_poly) %>%
-  as.data.frame() %>%
-  cbind(quadratic) %>%
-  ggplot(aes(x)) +
-  geom_point(aes(y = truth), alpha = 0.1) +
-  stat_function(fun = true_f, color = 'blue') +
-  geom_line(aes(y = response), color = 'red')
-```
-
-```{r}
-makeLearner("regr.rpart", minsplit = 8, cp = 0.001) %>%
-  train(learner = ., 
-        task = tsk_quadratic) %>%
-  predict(tsk_quadratic) %>%
-  as.data.frame() %>%
-  cbind(quadratic) %>%
-  ggplot(aes(x)) +
-  geom_point(aes(y = truth), alpha = 0.1) +
-  stat_function(fun = true_f, color = 'blue') +
-  geom_line(aes(y = response), color = 'red')
-
-```
-
-```{r}
-lrn_ctree %>% getLearnerParamSet()
-```
-
-
-```{r}
-lrn_ctree %>%
-  train(learner = ., 
-        task = tsk_quadratic) %>%
-  predict(tsk_quadratic) %>%
-  as.data.frame() %>%
-  cbind(quadratic) %>%
-  ggplot(aes(x)) +
-  geom_point(aes(y = truth), alpha = 0.1) +
-  stat_function(fun = true_f, color = 'blue') +
-  geom_line(aes(y = response), color = 'red')
-
-
-```
-
-
-
-```{r}
-lrn_bagging %>%
-  
-  train(learner = ., 
-        task = tsk_quadratic_poly) %>%
-  predict(tsk_quadratic_poly) %>%
-  as.data.frame() %>%
-  cbind(quadratic) %>%
-  ggplot(aes(x)) +
-  geom_point(aes(y = truth), alpha = 0.1) +
-  stat_function(fun = true_f, color = 'blue') +
-  geom_line(aes(y = response), color = 'red')
-
-```
-
-
-```{r}
-makeLearner("regr.randomForest", id="Random Forest", ntree = 20, nodesize = 150) %>%
-  train(learner = ., 
-        task = tsk_quadratic) %>%
-  predict(tsk_quadratic) %>%
-  as.data.frame() %>%
-  cbind(quadratic) %>%
-  ggplot(aes(x)) +
-  geom_point(aes(y = truth), alpha = 0.1) +
-  stat_function(fun = true_f, color = 'blue') +
-  geom_path(aes(y = response), color = 'red')
-
-```
-
-```{r}
-lrn_xgboost %>%
-  getLearnerParamSet()
-```
-
-
-```{r}
-makeLearner("regr.xgboost", 
-            nrounds = 40, eta = 0.1) %>%
-  train(learner = ., 
-        task = tsk_quadratic) %>%
-  predict(tsk_quadratic) %>%
-  as.data.frame() %>%
-  cbind(quadratic) %>%
-  ggplot(aes(x)) +
-  geom_point(aes(y = truth), alpha = 0.1) +
-  stat_function(fun = true_f, color = 'blue') +
-  geom_line(aes(y = response), color = 'red')
-
-
-```
-
-```{r}
-# Setting the random number generator for reproducibility
-set.seed(123, "L'Ecuyer")
-
-ctrl_quadratic <- makeTuneControlGenSA(budget = 50, maxit = 50, max.time = 300)
-
-
-ps_xgb_quadratic <- makeParamSet(
-         makeIntegerParam("max_depth",lower = 1L,upper = 20L),
-         makeIntegerParam("nrounds",lower = 1L,upper = 200L),
-         makeNumericParam("min_child_weight",lower = 1L,upper = 100L),
-         makeNumericParam("subsample",lower = 0.5, upper = 1),
-         makeNumericParam("lambda",lower = -1, upper = 2, trafo = function(x){10^x}),
-         makeNumericParam("eta",lower = 0.1,upper = 0.5)
-)
-
-
-fname <- "xgboost_tune_quadratic.RDS"
-
-if (file.exists(fname)) {
-  xgboost_tune_quadratic <- readRDS(fname)
-} else {
-  parallelStart()
-  
-  xgboost_tune_quadratic <- 
-    tuneParams(
-      learner = lrn_xgboost_tune,
-      task = tsk_quadratic,
-      resampling = rdesc_CV5,
-      measures = mape,
-      par.set = ps_xgb_quadratic,
-      control = ctrl_quadratic,
-      show.info = T
-    )
-  
-  parallelStop()
-  
-  saveRDS(xgboost_tune_quadratic, file = fname)
-}
-
-```
-
-
-```{r}
-xgboost_tune_quadratic$y
-xgboost_tune_quadratic$x
-
-```
-
-
-```{r}
-set.seed(123)
-lrn_xgboost_tune %>%
-  setHyperPars(par.vals = xgboost_tune_quadratic$x) %>%
-  train(learner = ., 
-        task = tsk_quadratic) %>%
-  predict(tsk_quadratic) %>%
-  as.data.frame() %>%
-  cbind(quadratic) %>%
-  ggplot(aes(x)) +
-  geom_point(aes(y = truth), alpha = 0.1) +
-  stat_function(fun = true_f, color = 'blue') +
-  geom_line(aes(y = response), color = 'red')
-
-```
-
-
-
-
-```{r}
-lrn_gbm %>% getLearnerParamSet()
-```
-
-
-```{r}
-makeLearner("regr.gbm", 
-            n.trees = 500,
-            shrinkage = 0.1) %>%
-  train(learner = ., 
-        task = tsk_quadratic) %>%
-  predict(tsk_quadratic) %>%
-  as.data.frame() %>%
-  cbind(quadratic) %>%
-  ggplot(aes(x)) +
-  geom_point(aes(y = truth), alpha = 0.1) +
-  stat_function(fun = true_f, color = 'blue') +
-  geom_line(aes(y = response), color = 'red')
-
-
-
-```
-
-
-
-
-```{r}
-data(Boston)
-head(Boston)
-```
-
-```{r, message=F, warning=F}
-ggpairs(Boston)
-```
-
-```{r}
-m_boston_full <- lm(medv ~ . + I(lstat^2)+ I(crim^2), data = Boston)
-summary(m_boston_full)
-```
-
-
-```{r}
-autoplot(m_boston_full)
-```
-
+Creating a learning task for the original dataset.
 ```{r}
 tsk_Boston <- makeRegrTask(id = "Boston Housing", target = "medv", data = Boston)
-tsk_Boston_Poly <- 
-  Boston %>% 
-  mutate(lstat2 = lstat^2, crim2 = crim^2) %>%
-  makeRegrTask(id = "Boston Housing", target = "medv", data = .)
-
-```
-
-```{r}
-# Setting the random number generator for reproducibility
-set.seed(123, "L'Ecuyer")
-
-# Detecting the number of avaliable CPU cores
-num_cores <- parallel::detectCores()
-
-# Starting parallelization
-parallelStartSocket(num_cores)
-
-bench_Boston_baseline <-  
-  tsk_Boston_Poly %>%
-  benchmark(learners = list(lrn_mlr, lrn_lasso),
-            tasks = .,
-            resampling = rdesc_CV10,
-          measures = ms_regr,
-         show.info = TRUE)
-
-parallelStop()
-
-```
-
-
-```{r}
-bench_Boston_baseline %>%
-  printBenchmark()
 ```
 
 
 
-
-Tree-based learners
+Creating tree-based learners
 ```{r}
 lrn_rpart <- makeLearner("regr.rpart", id = "rpart")
 lrn_ctree <- makeLearner("regr.ctree", id = "ctree")
@@ -653,57 +207,60 @@ set.seed(123, "L'Ecuyer")
 parallelStartSocket(num_cores)
 
 bench_Boston_Trees <-  
-  tsk_Boston %>%
-  benchmark(learners = list(lrn_rpart, lrn_ctree),
-            tasks = .,
+  list(lrn_rpart, lrn_ctree) %>%
+  benchmark(learners = .,
+            tasks = tsk_Boston,
             resampling = rdesc_CV10,
-          measures = ms_regr,
-         show.info = TRUE)
+            measures = ms_regr,
+            show.info = TRUE)
 
 parallelStop()
 
 ```
 
+Benchmark results:
 ```{r}
 bench_Boston_Trees %>%
   printBenchmark()
 ```
 
+Ctree yielded a model comparable in performance to multiple regression, rpart produced a worse model, since it prefers more conservative trees with the default parameters.
+
+
+
+## Ensemble models
+
+Now we compare a few ensemble-based models - bagging, Random Forest, and boosting.
+Bagging is implemented using `randomForest()` function with `mtry` parameter set to the number of predictors.
+
 
 ```{r}
-tsk_Boston_Dummy <- tsk_Boston %>% createDummyFeatures()
 
 lrn_bagging_Boston <- 
-  makeLearner("regr.randomForest", 
-              id="Bagging (via RF)", 
-              mtry = getTaskNFeats(tsk_Boston_Dummy))
+  makeLearner("regr.randomForest", id="Bagging (via RF)", 
+              mtry = getTaskNFeats(tsk_Boston))
 
 lrn_RF_Boston <- 
-  makeLearner("regr.randomForest", 
-              id="RandomForest")
-
+  makeLearner("regr.randomForest", id="randomForest")
 
 lrn_ranger_Boston <- 
-  makeLearner("regr.ranger", 
-              id="ranger")
+  makeLearner("regr.ranger", id="ranger")
 
 lrn_cforest_Boston <- 
-  makeLearner("regr.cforest", 
-              id="cforest")
-
+  makeLearner("regr.cforest", id="cforest")
 
 lrn_gbm_Boston <- 
-  makeLearner("regr.gbm", 
-              id="gbm")
+  makeLearner("regr.gbm", id="gbm")
 
 
 lrn_xgboost_Boston <- 
-  makeLearner("regr.xgboost", 
-              id="xgboost")
+  makeLearner("regr.xgboost", id="xgboost")
 
 
 ```
 
+
+Benchmarking the models 
 
 ```{r}
 # Setting the random number generator for reproducibility
@@ -712,57 +269,88 @@ set.seed(123, "L'Ecuyer")
 # Starting parallelization
 parallelStartSocket(num_cores)
 
-bench_Boston_ensembles <-  
-  tsk_Boston_Dummy %>%
-  benchmark(learners = list(lrn_bagging_Boston, lrn_RF_Boston, 
-                            lrn_ranger_Boston, lrn_gbm_Boston, 
-                            lrn_xgboost_Boston),
-            tasks = .,
+bench_Boston_Ensembles <-  
+  list(lrn_bagging_Boston, lrn_RF_Boston, 
+                            lrn_ranger_Boston, lrn_cforest_Boston,
+                            lrn_gbm_Boston, lrn_xgboost_Boston) %>%
+  benchmark(learners = .,
+            tasks = tsk_Boston,
             resampling = rdesc_CV10,
-          measures = ms_regr,
-         show.info = TRUE)
+            measures = ms_regr,
+           show.info = TRUE)
 
 parallelStop()
+```
 
-bench_Boston_ensembles %>%
+Comparing the results
+```{r}
+bench_Boston_Ensembles %>%
   printBenchmark()
 
 ```
 
 
+Most ensembles produced a better result compared to single trees and regression. The xgboost algorithm has overfit the data and showed poor results in cross validation. Boosting-based algorithms were the fastest to train. Ranger is ~2 times faster on this task compared to randomForest
+
+# Tuning the hyperparameters
+
+The xgboost algorithm has a large set of parameters:
 
 ```{r}
-lrn_xgboost %>%
+lrn_xgboost_Boston %>%
   getLearnerParamSet()
 ```
 
 
+The description of the parameters is available in the help or [online](https://xgboost.readthedocs.io/en/latest/parameter.html).
 
 
+To control overfitting, we can limit the minimum node size, the maximum tree depth, the minimum improvement in node purity, the learning rate and the number of boosting rounds. Additionally, we can adjust the proportions of sampled observations and variables for training a tree.
 
-tune xgboost
+
 ```{r}
-set.seed(123, "L'Ecuyer")
-
-lrn_xgboost_tune <- makeLearner("regr.xgboost")
-
-rdesc_CV5 <- makeResampleDesc(method = "CV", 
-                                   iter = 5)
-
 ps_xgb <- makeParamSet(
-         #makeDiscreteParam("booster",values = c("gbtree","gblinear", "dart")),
-         makeIntegerParam("max_depth",lower = 1L,upper = 10L),
-         makeIntegerParam("nrounds",lower = 1L,upper = 200L),
-         makeNumericParam("min_child_weight",lower = 1L,upper = 10L),
-         makeNumericParam("subsample",lower = 0.5,upper = 1),
-         makeNumericParam("colsample_bytree",lower = 0.5,upper = 1),  
-         makeNumericParam("lambda",lower = -1,upper = 2, trafo = function(x){10^x}),
-         makeNumericParam("eta",lower = 0.1,upper = 0.5)
+         makeIntegerParam("max_depth",lower = 1L,upper = 6L), # maximum tree depth - controls the interactions
+         makeIntegerParam("nrounds",lower = 1L,upper = 2000L), # maximum number of trees to build
+         makeNumericParam("min_child_weight",lower = 1L,upper = 10L), #minimum node size
+         makeNumericParam("subsample",lower = 0.5,upper = 1), #proportion of sampled observations for training
+         makeNumericParam("colsample_bytree",lower = 0.5,upper = 1),   #proportion of sampled variables
+         makeNumericParam("eta",lower = -3, upper = -0.5, trafo = function(x){10^x}) # learning rate
          
 )
+```
 
-ctrl <- makeTuneControlGenSA(budget = 50, maxit = 50, max.time = 300)
 
+To speed-up computation, we'll add the resample description for 5-fold cross-validation.
+
+```{r}
+rdesc_CV5 <- makeResampleDesc(method = "CV",iter = 5)
+```
+
+
+We can use different search algorithms to find the optimal combination of parameters.
+
+The `GenSA` algorithm uses [simulated annealing](https://en.wikipedia.org/wiki/Simulated_annealing) search strategy, but can be slow and hard to control.
+
+The function takes limits for maximum number of objective evaluations (`budget`), the maximum number of search iterations (`maxit`) and maximum time for running (in seconds), but the current implementation fails to enforce them, so the actual running time might be much larger.
+
+```{r}
+ctrl <- makeTuneControlGenSA(budget = 25, maxit = 25, max.time = 300)
+```
+
+
+We can also employ random search, which just checks a given number of randomly selected combinations of parameters (`maxit`).
+
+```{r}
+#ctrl <- makeTuneControlRandom(maxit = 100)
+```
+
+To prevent very large report knitting time, we also cache the optimized parameters in a file. The search will be only performed when that file is absent.
+
+Here we perform the hyperparameter tuning:
+
+```{r Tuning parameters for xgboost}
+set.seed(123, "L'Ecuyer")
 
 fname <- "xgboost_tune_Boston.RDS"
 
@@ -773,8 +361,8 @@ if (file.exists(fname)) {
 
   xgboost_tune_Boston <- 
     tuneParams(
-      learner = lrn_xgboost_tune,
-      task = tsk_Boston_Dummy,
+      learner = lrn_xgboost_Boston,
+      task = tsk_Boston,
       resampling = rdesc_CV5,
       measures = mape,
       par.set = ps_xgb,
@@ -786,21 +374,28 @@ if (file.exists(fname)) {
   saveRDS(xgboost_tune_Boston, file = fname)
 }
 
-
 ```
+
+
+
+Review the optimized parameter values:
 
 ```{r}
 xgboost_tune_Boston$y
 xgboost_tune_Boston$x
 ```
 
+Make a new learner with adjusted hyperparameters:
+
 ```{r}
 lrn_xgboost_tuned_Boston <- 
-  lrn_xgboost_tune %>%
+  lrn_xgboost %>%
   setHyperPars(par.vals = xgboost_tune_Boston$x)
+```
 
+Benchmark the new learner:
 
-
+```{r}
 # Setting the random number generator for reproducibility
 set.seed(123, "L'Ecuyer")
 
@@ -808,16 +403,147 @@ set.seed(123, "L'Ecuyer")
 parallelStartSocket(num_cores)
 
 bench_Boston_ensembles <-  
-  tsk_Boston_Dummy %>%
-  benchmark(learners = list(lrn_xgboost_Boston, lrn_xgboost_tuned_Boston),
-            tasks = .,
-            resampling = rdesc_CV10,
-          measures = ms_regr,
-         show.info = TRUE)
+   list(lrn_xgboost_Boston, lrn_xgboost_tuned_Boston) %>%
+  benchmark(
+    learners = .,
+    tasks = tsk_Boston,
+    resampling = rdesc_CV10,
+    measures = ms_regr,
+    show.info = TRUE)
 
 parallelStop()
 
+```
+
+Compare the performance:
+
+```{r}
 bench_Boston_ensembles %>%
   printBenchmark()
+```
+
+
+
+# Feature importance
+
+The ensemble models are hard to interpret due to large number of trees in the ensemble.
+We can however get the information on variable importance which is similar to the summary of a regression model.
+
+The relative importance is based on the average improvement in node purity when doing a split on a particular predictor.
+
+First, we need to train an ensemble model (xgboost in this case):
+
+```{r}
+m_xgboost_Boston <- 
+  lrn_xgboost_tuned_Boston %>%
+  train(tsk_Boston)
+```
+
+The `featureImportance()` function extracts the variable importance metrics from the trained model. Some learning algorithms need parameter adjustments to produce that data. Refer to [help](https://mlr.mlr-org.com/reference/getFeatureImportance.html) to learn more.
+
+```{r}
+fi_xgboost <- 
+  m_xgboost_Boston %>%
+  getFeatureImportance()
+```
+
+The extracted feature importance are stored in the `res` element of the object produced by the function.
+Here we extract it and visualize using `ggplot()`.
+
+
+It is a good idea to create a helper function to plot the feature importance:
+
+```{r Helper function for plotting the feature importance}
+plotFeatureImportance <- function(fi_data) {
+  fi_data$res %>%
+  gather(key = 'predictor', value = 'importance') %>%
+  arrange(desc(importance)) %>%
+  ggplot(aes(fct_reorder(predictor, importance), importance)) +
+  geom_col() +
+  coord_flip()
+}
 
 ```
+
+
+
+
+```{r}
+fi_xgboost %>% 
+  plotFeatureImportance()
+```
+
+
+
+A similar plot can be costructed for the Random Forest model:
+
+
+```{r}
+m_RF_Boston <- 
+  lrn_RF_Boston %>%
+  train(tsk_Boston)
+
+m_RF_Boston %>%
+  getFeatureImportance() %>%
+  plotFeatureImportance()
+
+```
+
+
+# Partial dependence plots
+
+[Partial dependence plots](https://christophm.github.io/interpretable-ml-book/ice.html) provide additional insight into the complex ensemble model. Such a plot shows how would the target variable change when changing as single predictor or a pair of predictors keeping all the remaining predictors fixed. This is similar to multiple regression coefficients, but the influence of a predictor is not constant and not linear.
+
+There's a built-in functionality in mlr to construct such plots.
+
+First, we consider individual effects of each predictor.
+
+Generating data for the individual plots:
+
+```{r}
+pd_xgboost_Boston_individual <- 
+  m_xgboost_Boston %>%
+  generatePartialDependenceData(tsk_Boston, 
+                                features = c("rm", "lstat", "ptratio", "nox",
+                                             "dis", "indus", "crim", "tax",
+                                             "age", "black", "chas",
+                                             "rad", "zn")
+                                )
+
+pd_xgboost_Boston_individual
+```
+
+Plotting individual predictor effects:
+
+```{r}
+pd_xgboost_Boston_individual %>%
+  plotPartialDependence()
+```
+
+We can also consider the effect from a pair of predictors. Such a plot may reveal an interaction between them.
+
+Generating data:
+
+```{r}
+pd_xgboost_Boston_interact <- 
+  m_xgboost_Boston %>%
+  generatePartialDependenceData(tsk_Boston, 
+                                features = c("rm", "indus"),
+                                interaction = T # enable interactions
+                                )
+
+```
+
+To visualize the effect from two predictors, we extract the resulting dataset (`data` element) and create a heatmap using `ggplot()`.
+
+```{r}
+pd_xgboost_Boston_interact %>%
+  .$data %>%
+  ggplot(aes(rm, indus, fill = medv)) +
+  geom_tile() +
+  scale_fill_viridis_c()
+```
+
+
+You can find more examples in [this tutorial](https://mlr.mlr-org.com/articles/tutorial/partial_dependence.html)
+
