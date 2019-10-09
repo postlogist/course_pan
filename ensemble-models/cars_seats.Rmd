@@ -1,0 +1,129 @@
+---
+title: "carseats"
+author: "Change me!"
+date: "09 10 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r Loading packages, message=FALSE, warning=FALSE}
+library(MASS) #stepwise regression
+library(mlr) # Machine Learning framework for R
+library(stringr) # string processing
+library(parallelMap) # Parallel computation
+library(rpart.plot) # Visualization of rpart trees
+library(ISLR) # Carseats dataset
+library(tidyverse) # Data visualization and transformation
+library(ggfortify) # Diagnostic plots for lm
+library(GGally) # SPLOM
+```
+
+
+# Data preparation
+
+Load the `Carseats` dataset (available via the `ISLR` package).
+
+This is a simulated dataset on sales of child car seats at 400 stores worldwide.
+See help for description of variables: 
+?Carseats
+
+Filter out the records with zero sales to prevent issues with computing the MAPE.
+
+
+# Exploratory Data Analysis
+
+Have a quick look on the data to form hypotheses on what variables are correlated with `Sales`.
+
+Here's an example of what you could do.
+
+```{r}
+
+Carseats %>%
+  ggplot(aes(Advertising, Sales, color = ShelveLoc)) +
+  geom_point() +
+  geom_smooth(se = F)
+
+```
+
+
+
+```{r}
+Carseats %>%
+  ggplot(aes(ShelveLoc, Sales)) +
+  geom_boxplot()
+
+```
+
+
+# Multiple regression
+
+Build a baseline model using multiple regression. 
+Use the hypotheses from the EDA stage to see, if some non-linearities and interactions need to be included.
+Use model summary and, possibly, stepwise variable selection procedure to check the plausibility of your hypotheses.
+
+
+# Benchmarking the models
+
+## Multiple and Lasso regression
+
+Create a learning task for Carseats dataset. Add non-linear terms and interactions if required.
+
+Create two learners for multiple and Lasso regression.
+
+Create a list of measures for model comparison. In this assignment you will use RMSE to compare models. You need to add also MAPE and time to train a model to the list. 
+
+Create a resampling description for 10-fold cross-validation.
+
+Compare the performance of multiple regression and lasso learners using benchmarking. Use the RMSE metric to rank the models.
+
+
+## Tree-based models
+
+Compare the performance of single tree models (rpart and ctree). Note, that you'll train them on the original dataset, since trees don't require manual addition of non-linear terms and interactions. For this you'll need to create additional learning task from the original dataset. You can use the task you've already created if you didn't add any variables to the dataset.
+
+How do the tree-based models compare to multiple/lasso regression?
+
+
+## Model ensembles
+
+Compare the performance of ensemble models using the same dataest. Consider at least bagging, randomForest, gbm and xgboost.
+
+Note that you'll need to convert the categorical variables to dummy variables using the `createDummyFeatures()` function with the learning task from the previous step.
+
+For bagging, you need to set the `mtry` parameter of the `randomForest()` function to the number of predictors. You can get that number using `getTaskNFeats()` function.
+
+What's the best performing model?
+
+
+# Model tuning
+
+Select any ensemble-based model of your choice and tune its hyperparameters.
+
+
+To do tuning, add a smaller 5-fold cross-validation resampling description.
+
+Use `getLearnerParamSet()` to review the available hyperparameters and refer to the help or the mlr [website](https://mlr.mlr-org.com/articles/tutorial/integrated_learners.html) for the description of the parameters.
+
+Add a parameter set describing the search space for the optimal parameter combination.
+
+
+Use `makeTuneControlGenSA()` or `makeTuneControlRandom()` search algorithms.
+
+Compare the performance before and after tuning.
+
+
+# Variable importance
+
+Train the ensemble model with the optimized parameters.
+Create a variable importance plot for the predictors.
+Does it correlate with the hypotheses from the EDA and Multiple Regression stages?
+
+
+
+# Partial dependence plots
+
+Produce partial dependence plots for individual predictors (at least two) and a pair of predictors.
+
