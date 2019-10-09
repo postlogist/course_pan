@@ -389,7 +389,7 @@ Make a new learner with adjusted hyperparameters:
 
 ```{r}
 lrn_xgboost_tuned_Boston <- 
-  lrn_xgboost %>%
+  makeLearner("regr.xgboost", id = "xgboost, tuned") %>%
   setHyperPars(par.vals = xgboost_tune_Boston$x)
 ```
 
