@@ -1,0 +1,628 @@
+---
+title: "Deep learning with Keras"
+author: "Gleb Zakhodyakin, postlogist@gmail.com"
+date: '`r format(Sys.time(), "%d.%m.%Y")`'
+output: 
+  html_document: 
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(width = 100) #adjust the width of text output for large tables
+```
+
+
+# Introduction
+
+This tutorial provides examples on using Keras package to build and train deep neural networks for various predictive tasks.
+
+In order to run the examples, you need to install the `keras` package as described [here](https://keras.rstudio.com/index.html). It will require to install Anaconda Python distribution that is available [here](https://www.anaconda.com/distribution/). Install the current Python 3.x version from that page.
+
+```{r, message=F, warning=F}
+library(tidyverse) # Data manipulation and visualization
+library(MASS) # Boston dataset
+library(keras) # Deep Learning
+```
+
+
+
+# Basic regression
+
+
+This notebook builds a model to predict the median price of homes in a Boston suburb during the mid-1970s. 
+The code is adapted from [this tutorial](https://keras.rstudio.com/articles/tutorial_basic_regression.html#conclusion).
+
+The dataset contains 13 different features:
+
+- Per capita crime rate.  
+- The proportion of residential land zoned for lots over 25,000 square feet.  
+- The proportion of non-retail business acres per town.  
+- Charles River dummy variable (= 1 if tract bounds river; 0 otherwise).  
+- Nitric oxides concentration (parts per 10 million).  
+- The average number of rooms per dwelling.  
+- The proportion of owner-occupied units built before 1940.  
+- Weighted distances to five Boston employment centers.  
+- Index of accessibility to radial highways.  
+- Full-value property-tax rate per $10,000.  
+- Pupil-teacher ratio by town.  
+- 1000 * (Bk - 0.63) ** 2 where Bk is the proportion of Black people by town.  
+- Percentage lower status of the population.  
+
+
+```{r}
+data(Boston)
+head(Boston)
+```
+
+
+## Data Preprocessing
+
+
+### Train/test split
+First, we'll do the train/test split. The training dataset will use 80% of the observations.
+
+
+```{r}
+set.seed(1234)
+train_indices <- sample(nrow(Boston), size = 0.8 * nrow(Boston))
+
+train_Boston_df <- Boston[train_indices, ]
+test_Boston_df <- Boston[-train_indices, ]
+```
+
+
+### Converting to a matrix
+
+Keras requires all data to be converted to a matrix (predictors) and a vector (target variable). 
+
+Boston dataset doesn't include any categorical variables, so conversion is easy. Otherwise, all such variables would need a converion to dummy variables.
+
+
+```{r}
+train_Boston <- train_Boston_df %>% dplyr::select(-medv) %>% as.matrix()
+head(train_Boston)
+```
+
+```{r}
+train_Boston_labels <- train_Boston_df$medv
+head(train_Boston_labels)
+```
+
+
+
+```{r}
+test_Boston <- test_Boston_df %>% dplyr::select(-medv) %>% as.matrix()
+head(test_Boston)
+```
+
+```{r}
+test_Boston_labels <- test_Boston_df$medv
+head(test_Boston_labels)
+```
+
+
+### Feature normalization
+
+It’s recommended to normalize features that use different scales and ranges. Although the model might converge without feature normalization, it makes training more difficult, and it makes the resulting model more dependant on the choice of units used in the input.
+
+We'll use z-standardization to bring all the predictors to the same range. Note, that here we standardize training and test data separately, to prevent information leak from the test set. We use means and standard deviations from the training data to normalize the test data.
+
+
+```{r}
+# Test data is *not* used when calculating the mean and std.
+
+# Normalize training data
+train_Boston <- scale(train_Boston) # This will standardize the features and add attributes with mean and sd for each column
+
+# Scaled data
+head(train_Boston)
+# Attributes
+attributes(train_Boston)
+```
+
+
+
+
+Using means and standard deviations from training set we normalize the test set:
+
+```{r}
+col_means_Boston <- attr(train_Boston, "scaled:center") 
+col_stddevs_Boston <- attr(train_Boston, "scaled:scale")
+test_Boston <- scale(test_Boston, center = col_means_Boston, scale = col_stddevs_Boston)
+
+```
+
+
+The dimensions for the training data
+
+```{r}
+paste0("Training entries: ", nrow(train_Boston), ", labels: ", length(train_Boston_labels))
+```
+
+
+
+The dimensions for the test data
+
+```{r}
+paste0("Test entries: ", nrow(test_Boston), ", labels: ", length(test_Boston_labels))
+```
+
+
+## Create the model
+
+
+The core data structure of Keras is a model, a way to organize layers. The simplest type of model is the Sequential model, a linear stack of layers.
+
+We begin by creating a sequential model and then adding layers using the pipe (%>%) operator.
+
+
+Here, we’ll use a sequential model with two densely connected hidden layers, and an output layer that returns a single, continuous value.  
+
+Building the neural network requires configuring the layers of the model, then compiling the model.
+
+Before the model is ready for training, it needs a few more settings. These are added during the model’s compile step:
+
+ - **Loss function** — This measures how accurate the model is during training. We want to minimize this function to “steer” the model in the right direction.  
+
+ - **Optimizer** — This is how the model is updated based on the data it sees and its loss function.  
+ 
+ - **Metrics** — Used to monitor the training and testing steps. 
+ 
+
+The model building steps are wrapped in a function, build_model, since we’ll create a second model, later on.
+
+
+```{r}
+build_model_Boston <- function() {
+  
+  model <- keras_model_sequential() %>%
+    layer_dense(units = 64, activation = "relu",
+                input_shape = dim(train_Boston)[2]) %>%
+    layer_dense(units = 64, activation = "relu") %>%
+    layer_dense(units = 1)
+  
+  model %>% compile(
+    loss = "mse",
+    optimizer = optimizer_rmsprop(),
+    metrics = list("mean_absolute_percentage_error", "mean_absolute_error", "mean_squared_error")
+  )
+  
+  model
+}
+
+model_Boston <- build_model_Boston()
+model_Boston %>% summary()
+```
+
+
+## Train the model
+
+Below are some common definitions that are necessary to know and understand to correctly utilize Keras - [from the Keras FAQ](https://keras.rstudio.com/articles/faq.html):
+
+  - **Sample**: one element of a dataset. 
+ 
+*Examples*: one image is a sample in a convolutional network. One audio file is a sample for a speech recognition model.
+ 
+
+  - **Batch**: a set of N samples. The samples in a batch are processed independently, in parallel. If training, a batch results in only one update to the model. 
+
+A batch generally approximates the distribution of the input data better than a single input. The larger the batch, the better the approximation; however, it is also true that the batch will take longer to process and will still result in only one update. For inference (evaluate/predict), it is recommended to pick a batch size that is as large as you can afford without going out of memory (since larger batches will usually result in faster evaluating/prediction).
+
+
+  - **Epoch**: an arbitrary cutoff, generally defined as “one pass over the entire dataset”, used to separate training into distinct phases, which is useful for logging and periodic evaluation.
+
+When using `evaluation_data` or `evaluation_split` with the fit method of Keras models, evaluation will be run at the end of every epoch.
+
+Within Keras, there is the ability to add **callbacks** specifically designed to be run at the end of an epoch. Examples of these are learning rate changes and model checkpointing (saving).
+
+
+Here the model is trained for 500 epochs, recording training and validation accuracy in a keras_training_history object. We also show how to use a custom callback, replacing the default training output by a single dot per epoch.
+
+
+```{r, warning=F}
+# Display training progress by printing a single dot for each completed epoch.
+print_dot_callback <- callback_lambda(
+  on_epoch_end = function(epoch, logs) {
+    if (epoch %% 80 == 0) cat("\n") # wrap the line at 80 characters
+    cat(".")
+  }
+)    
+
+epochs <- 500
+
+# Fit the model and store training stats
+history <- model_Boston %>% fit(
+  train_Boston,
+  train_Boston_labels,
+  epochs = epochs,
+  validation_split = 0.2,
+  verbose = 0,
+  callbacks = list(print_dot_callback)
+)
+```
+
+
+
+Now, we visualize the model’s training progress using the metrics stored in the history variable. We want to use this data to determine how long to train before the model stops making progress.
+
+```{r}
+plot(history, metrics = "mean_absolute_percentage_error", smooth = F) +
+  ylim(0, 25)
+```
+
+
+This graph shows little improvement in the model after about 150 epochs. Let’s update the fit method to automatically stop training when the validation score doesn’t improve. We’ll use a callback that tests a training condition for every epoch. If a set amount of epochs elapses without showing improvement, it automatically stops the training.
+
+
+
+```{r, warning=F}
+# The patience parameter is the amount of epochs to check for improvement.
+early_stop <- callback_early_stopping(monitor = "val_loss", patience = 50)
+
+model_Boston <- build_model_Boston() # re-build the model from scratch
+
+history <- model_Boston %>% fit(
+  train_Boston,
+  train_Boston_labels,
+  epochs = epochs,
+  validation_split = 0.2,
+  verbose = 0,
+  callbacks = list(early_stop, print_dot_callback)
+)
+
+```
+
+
+As a result, training has become much shorter:
+
+```{r}
+plot(history, metrics = "mean_absolute_percentage_error", smooth = FALSE) +
+  xlim(0, 100) + ylim(5, 25)
+```
+
+## Evaluate accuracy
+
+Let’s see how did the model performs on the test set:
+
+
+```{r}
+(model_Boston %>% evaluate(test_Boston, test_Boston_labels, verbose = 0))
+```
+
+```{r}
+c(loss, mape, mae, mse) %<-% 
+  (model_Boston %>% 
+     evaluate(test_Boston, test_Boston_labels, verbose = 0))
+
+sprintf("Accuracy on the test set: MAPE = %.1f, MAE = %.1f, RMSE = %.1f", mape, mae, sqrt(mse))
+
+```
+
+The performance of the model is better, than the multiple regression or Lasso and is comparable to the performance of ensemble models like randomForest or xgboost.
+
+## Predict
+
+Finally, predict some housing prices using data in the testing set:
+
+```{r}
+Boston_predictions <- 
+  model_Boston %>% 
+  predict(test_Boston)
+
+test_Boston_predictions <- 
+  test_Boston_df %>% 
+  mutate(predicted_medv = Boston_predictions)
+
+test_Boston_predictions %>% 
+  dplyr::select(medv, predicted_medv, everything()) %>% 
+  head()
+
+```
+
+```{r}
+
+ggplot(test_Boston_predictions, aes(predicted_medv, medv, color = factor(chas))) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, lty = 'dashed')
+```
+
+
+
+## Conclusion
+This section introduced a few techniques to handle a regression problem.
+
+ - Mean Squared Error (MSE) is a common **loss function** used for regression problems. There are other loss functions [available](https://keras.rstudio.com/reference/loss_mean_squared_error.html).
+
+ - The model can be additionally evaluated upon several **performance metrics** (MAE, MAPE) - the list is available [here](https://keras.rstudio.com/reference/metric_binary_accuracy.html) 
+ 
+ - When input data features have values with different ranges, each feature should be **scaled** independently. Z-standardization is often used for this.
+ 
+ - If there is not much training data, prefer a small network with few hidden layers to avoid overfitting.
+
+ - **Early stopping** is a useful technique to prevent overfitting
+
+
+
+# Basic classification
+
+Adapted from [this tutorial](https://keras.rstudio.com/articles/tutorial_basic_classification.html).
+
+
+In this section we consider a simple example of image classification. Keras is used to recognize handwritten digits from the [MNIST dataset](https://en.wikipedia.org/wiki/MNIST_database).  MNIST (Modified National Institute of Standards and Technology) dataset is a large database of handwritten digits that is commonly used for training various image processing systems. 
+
+
+MNIST consists of 28 x 28 grayscale images of handwritten digits like these:
+![](https://keras.rstudio.com/images/MNIST.png)
+
+The dataset also includes labels for each image, telling us which digit it is. For example, the labels for the above images are 5, 0, 4, and 1.
+
+There are 60 000 training images and 10 000 testing images digitized from the handwritten digits drawn by American Census Bureau employees and high school students.
+
+
+
+## Data Preprocessing
+
+The MNIST dataset is included with Keras and can be accessed using the `dataset_mnist()` function. Here we load the dataset then create variables for our test and training data:
+
+
+```{r}
+mnist <- dataset_mnist()
+x_train <- mnist$train$x
+y_train <- mnist$train$y
+x_test <- mnist$test$x
+y_test <- mnist$test$y
+```
+
+The x data is a 3-d array (images,width,height) of grayscale values:
+
+```{r}
+dim(x_train)
+```
+
+The pixel values fall in the range of 0 to 255:
+
+```{r, warning=F}
+image_1 <- as.data.frame(x_train[1, , ])
+colnames(image_1) <- seq_len(ncol(image_1))
+image_1$y <- seq_len(nrow(image_1))
+image_1 <- gather(image_1, "x", "value", -y)
+image_1$x <- as.integer(image_1$x)
+
+ggplot(image_1, aes(x = x, y = y, fill = value)) +
+  geom_tile() +
+  scale_fill_gradient(low = "white", high = "black", na.value = NA) +
+  scale_y_reverse() +
+  theme_minimal() +
+  theme(panel.grid = element_blank())   +
+  theme(aspect.ratio = 1) +
+  labs(x = NULL, y = NULL, title = paste("This is", y_train[1]))
+```
+
+
+The y data is an integer vector with the class labels.
+
+```{r}
+dim(y_train)
+```
+
+```{r}
+y_train[1:20]
+```
+
+
+The pixels in source images are integers ranging between 0 to 255. We scale these values to floating point values in the range of 0 to 1 before feeding to the neural network model. For this, we simply divide by 255. 
+
+It’s important that the training set and the testing set are preprocessed in the same way:
+
+```{r}
+x_train <- x_train / 255
+x_test <- x_test / 255
+```
+
+
+Below are the first 25 images from the training set with the class labels.
+
+```{r}
+par(mfcol=c(5,5))
+par(mar=c(0, 0, 1.5, 0), xaxs='i', yaxs='i')
+for (i in 1:25) { 
+  img <- x_train[i, , ]
+  img <- t(apply(img, 2, rev)) 
+  image(1:28, 1:28, img, col = gray((0:255)/255), xaxt = 'n', yaxt = 'n',
+        main = y_train[i])
+}
+```
+
+
+
+The y data is an integer vector with values ranging from 0 to 9. To prepare this data for training we [one-hot encode](https://www.quora.com/What-is-one-hot-encoding-and-when-is-it-used-in-data-science) the vectors into binary class matrices using the Keras [`to_categorical()`](https://keras.rstudio.com/reference/to_categorical.html) function:
+
+
+```{r, eval=F, show=F}
+y_train <- to_categorical(y_train, 10)
+y_test <- to_categorical(y_test, 10)
+
+head(y_train)
+```
+
+
+
+## Create the model
+
+We begin by creating a sequential model and then adding layers using the pipe (%>%) operator.
+
+### Setup the layers
+The basic building block of a neural network is the layer. Layers extract representations from the data fed into them. And, hopefully, these representations are more meaningful for the problem at hand.
+
+Most of deep learning consists of chaining together simple layers. Most layers, like `layer_dense`, have parameters that are learned during training.
+
+```{r}
+model <- keras_model_sequential() 
+model %>% 
+  layer_flatten(input_shape = c(28, 28)) %>%
+  layer_dense(units = 256, activation = 'relu') %>% 
+  layer_dropout(rate = 0.3) %>% 
+  layer_dense(units = 128, activation = 'relu') %>%
+  layer_dropout(rate = 0.2) %>%
+  layer_dense(units = 10, activation = 'softmax')
+
+```
+
+
+The first layer in this network, `layer_flatten`, transforms the format of the images from a 2d-array (of 28 by 28 pixels), to a 1d-array of 28 * 28 = 784 pixels. Think of this layer as unstacking rows of pixels in the image and lining them up. This layer has no parameters to learn; it only reformats the data.
+
+After the pixels are flattened, the network consists of a sequence of three **dense** layers. These are densely-connected, or fully-connected, neural layers. The first dense layer has 256 nodes (or neurons). the second layer has 128 neurons. The last layer is a 10-node softmax layer — this returns an array of 10 probability scores that sum to 1. The final layer outputs a length 10 numeric vector (probabilities for each digit) using a softmax activation function.
+
+Use the summary() function to print the details of the model:
+
+```{r}
+summary(model)
+```
+
+
+### Compile the model
+
+Next, compile the model with appropriate loss function, optimizer, and metrics.
+This example uses accuracy, the fraction of the images that are correctly classified.
+
+```{r}
+model %>% compile(
+  loss = 'sparse_categorical_crossentropy',
+  optimizer = optimizer_rmsprop(),
+  metrics = c('accuracy')
+)
+```
+
+
+
+## Train the model
+
+Use the `fit()` function to train the model for 10 epochs using batches of 128 images:
+
+```{r}
+history <- model %>% fit(
+  x_train, y_train, 
+  epochs = 15, batch_size = 128, 
+  validation_split = 0.2
+)
+```
+
+
+The history object returned by fit() includes loss and accuracy metrics which we can plot:
+
+
+```{r}
+plot(history, metrics = "acc", smooth = F)
+```
+
+
+## Evaluate accuracy
+
+
+Next, compare how the model performs on the test dataset:
+
+
+```{r}
+score <- model %>% evaluate(x_test, y_test)
+
+cat('Test loss:', score$loss, "\n")
+cat('Test accuracy:', score$acc, "\n")
+
+```
+
+It turns out, the accuracy on the test dataset is about the same as the accuracy on the training dataset, so the model didn't overfit the training data.
+
+
+
+## Predict
+
+With the model trained, we can use it to make predictions about some images.
+
+
+We could also predict the probabilities for each class:
+
+```{r}
+predictions <- model %>% predict(x_test)
+predictions %>% head(3)
+```
+
+Here, the model has predicted the label for each image in the testing set. 
+
+Let’s take a look at the first prediction:
+
+```{r}
+predictions[1, ]
+```
+
+A prediction is an array of 10 numbers. These describe the “confidence” of the model that the image corresponds to each of the 10 different articles of clothing. We can see which label has the highest confidence value:
+
+```{r}
+which.max(predictions[1, ])
+```
+
+As the labels are 0-based, this actually means a predicted label of 7. So the model is most confident that this image is the '7' digit. 
+
+Alternatively, we can also directly get the class prediction:
+
+```{r}
+predicted_labels <-  model %>% predict_classes(x_test)
+
+predicted_labels %>% head()
+```
+
+And we can check the test label to see this is correct:
+
+```{r}
+y_test %>% head()
+```
+
+
+```{r}
+table(predicted = predicted_labels,
+      actual = y_test)
+
+```
+
+
+Let’s plot several images with their predictions. Correct prediction labels are green and incorrect prediction labels are red.
+
+
+```{r}
+par(mfcol=c(5,5))
+par(mar=c(0, 0, 1.5, 0), xaxs='i', yaxs='i')
+for (i in 1:25) { 
+  img <- x_test[i, , ]
+  img <- t(apply(img, 2, rev)) 
+  # subtract 1 as labels go from 0 to 9
+  predicted_label <- predicted_labels[i]#which.max(predictions[i, ]) - 1
+  true_label <- y_test[i]
+  if (predicted_label == true_label) {
+    color <- '#008800' 
+  } else {
+    color <- '#bb0000'
+  }
+  image(1:28, 1:28, img, col = gray((0:255)/255), xaxt = 'n', yaxt = 'n',
+        main = paste0(predicted_label, " (actual ",
+                      true_label, ")"),
+        col.main = color)
+}
+```
+
+
+
+
+
+# Resources on Keras
+
+
+ - More [tutorials](https://keras.rstudio.com/index.html#tutorials) and [learning resources](https://keras.rstudio.com/index.html#learning-more) are available on the Keras for R website.
+
+ - **The Deep Learning with R** book by François Chollet (the creator of Keras) provides a more comprehensive introduction to both Keras and the concepts and practice of deep learning.
+
+ - You may also find it convenient to download the [Deep Learning with Keras cheat sheet](https://github.com/rstudio/cheatsheets/raw/master/keras.pdf), a quick high-level reference to all of the capabilities of Keras.
+ 
+ 
+ 
+ 
