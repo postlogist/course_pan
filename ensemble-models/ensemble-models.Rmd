@@ -93,7 +93,8 @@ tsk_Boston_Poly <-
          lstat2 = lstat^2,
          rm2 = rm^2,
          sqrtdis = sqrt(dis)) %>%
-  makeRegrTask(id = "Boston Housing (with polynomials)", target = "medv", data = .)
+  makeRegrTask(id = "Boston Housing (with polynomials)", target = "medv", data = .) %>%
+  normalizeFeatures(method='standardize')
 
 ```
 
@@ -105,7 +106,8 @@ Next, we create two regression-based learners:
 lrn_mlr <- makeLearner("regr.lm", id = "mlr")
 
 # Lasso regression
-lrn_lasso <- makeLearner("regr.glmnet", id = "Lasso")
+lrn_lasso <- makeLearner("regr.glmnet", id = "Lasso", 
+                         par.vals = list(alpha = 1))
 ```
 
 
