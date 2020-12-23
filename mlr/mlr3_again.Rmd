@@ -1,0 +1,428 @@
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, message=FALSE, warning=FALSE}
+library(stringr) # работа со строками
+library(tidyverse) # трансформация и визуализация данных
+car_ad <- read_csv("car_ad.csv")
+glimpse(car_ad)
+```
+
+Пропущенные значения
+
+```{r}
+car_ad %>% 
+  gather(key = "variable") %>%
+  filter(is.na(value) | str_length(value) == 0) %>%
+  group_by(variable) %>%
+  summarize(missing = n())
+  
+```
+
+В двух переменных имеются пропущенные значения, порядка 5% от общего количества наблюдений.
+
+Переменные `car` (марка автомобиля) и `model` (модель автомобиля) содержат большое число категорий.
+
+Наиболее популярные (более 100 объявлений о продаже) марки автомобилей:
+
+```{r Популярность марок}
+car_ad %>% 
+  group_by(car) %>%
+  summarize(count = n()) %>%
+  arrange(count) %>%
+  filter(count >= 100) %>%
+
+  ggplot(aes(x = fct_inorder(car), y = count)) +
+    geom_bar(stat = "identity") + coord_flip() +
+  labs(x = NULL, y = "Количество предложений",
+       title = "Наиболее популярные марки автомобилей")
+
+```
+
+
+
+```{r Наиболее популярные модели}
+car_ad1 <- car_ad %>% 
+  mutate(model = paste(car, model)) # объединяем производителя и модель для подписей
+  
+  
+car_ad1 %>% 
+  group_by(model) %>%
+  summarize(count = n()) %>%
+  arrange(count) %>%
+  filter(count > 60) %>%
+
+  ggplot(aes(x = fct_inorder(model), y = count)) +
+    geom_bar(stat = "identity") + coord_flip() +
+    labs(x = NULL, y = "Количество предложений",
+       title = "Наиболее популярные модели автомобилей")
+  
+
+```
+
+
+Для моделирования необходимо преобразовать текстовые переменные в факторные. Уровни фактора будут определяться по частоте упоминания значений в наборе данных. Таким образом, в базовую категорию попадут наиболее типичные (частые) значения.
+
+```{r}
+# Преобразование текстовых переменных в факторные: mlr не работает с текстом
+car_ad1 <- car_ad1 %>% 
+  mutate_if(is_character, fct_infreq)
+
+glimpse(car_ad1)
+  
+```
+
+После преобразования текста в факторы становится доступна описательная статистика по всем переменным.
+
+```{r}
+summary(car_ad1)
+```
+
+Распределения количественных переменных скошенные. В данных по объему двигателя содержатся странные значения - порядка 100 литров.
+
+```{r Гистограмма объема двигателя}
+ggplot(car_ad1, aes(x = engV)) +
+  geom_histogram() +
+  xlim(c(0, 10)) +
+  labs(title = "Гистограмма по объему двигателя")
+```
+
+
+```{r}
+car_ad1 %>%
+  filter(engV > 10) %>%
+  arrange(engV) %>%
+  head(10)
+```
+
+Двигатель объемом 17 литров на легковом автомобиле - очевидно некорректные данные - следствие ошибок ввода или преобразования единиц измерения. Заменим все неправдоподобные значения на пропущенные. Кроме того, отфильтруем предложения с нулевой ценой. Поскольку зависимость пробег - цена - нелинейна (цена обратно пропорциональна пробегу), добавим переменную: 1/пробег.
+
+```{r Замена некорректных значений объема двигателя и фильтрация нулевых цен}
+car_ad1 <-  car_ad1 %>%
+  filter(price > 0) %>%
+  mutate(inv_mileage = 1000 / (mileage + 1),
+         engV = if_else(engV > 8, as.numeric(NA), engV))
+```
+
+
+## Моделирование с помощью MLR
+
+#MLR3
+
+Продолжение блокнота - адаптация решения в MLR для MLR3. MLR3 это перспективный и современный пакет, с более структурированной логикой работы.
+Кроме того, он проще в установке и работе с зависимыми пакетами. В работе тоже несколько проще, если слово "проще" хоть как-то применимо к задачам машинного обучения :)
+
+Экосистема пакета постепенно развивается
+
+
+Объединение редких значений сделано через DataExplorer. Потом эти значения всё равно пришлось убрать из-за того, что регрессия на них нормально не строится
+
+```{r Создание задачи для предсказания цены автомобиля}
+library(mlr3)
+library(DataExplorer)
+car_ad1 <- group_category(car_ad1, "model", 0.015, update = TRUE)
+car_ad1 <- group_category(car_ad1, "car", 0.015, update = TRUE)
+
+car_ad2 <- drop_columns(car_ad1,c("model","car"))
+
+library(writexl)
+
+write_xlsx(car_ad1, "car_ad1.xlsx")
+
+
+car_ad1 <- car_ad1 %>% 
+  mutate_if(is_character, fct_infreq)
+
+glimpse(car_ad1)
+
+car_task = TaskRegr$new(id = "Цены автомобилей", backend = car_ad2, target = "price")
+print(car_task)
+
+car_ad2
+
+```
+В датасете есть пропущенные значения. В MLR и MLR3 можно практически автоматизировать их обработку.
+
+```{r}
+car_task$missings()
+```
+
+Убираем пропуски - вариант 1. Обработку данных в mlr3 можно делать через PipeOps/Pipelines (отдаленный аналог блоков описания процессов). За счет этого обработка данных унифицируется и процесс в целом больше похож на обработку в других языках программирования.
+
+При помощи данного инструмента можно делать "конвейер" обработки данных
+
+https://mlr3pipelines.mlr-org.com/reference/index.html
+
+Есть множество PipeOps для различных задач. po - префикс "блока", в скобках указывается его название, которое обозначает его функцию. "$" - оператор разделения объекта и метода объекта.
+
+po$train это запуск обработки. Нужно указать, какое задание (task) следует обработать. Задания передаются списком, начинающегося с "1". У нас только одно
+задание, поэтому указываем "[[1]]"
+
+https://mlr3pipelines.mlr-org.com/reference/mlr_pipeops_imputemean.html
+
+```{r}
+po = po("imputemean")
+new_task = po$train(list(task = car_task))[[1]]
+new_task$missings()
+```
+
+https://rdrr.io/cran/mlr3pipelines/man/mlr_pipeops_imputeoor.html
+
+
+```{r}
+
+po2 = po("imputeoor")
+new_task2 = po2$train(list(task = new_task))[[1]]
+new_task2$missings()
+```
+```{r}
+new_task2
+```
+
+Убираем пропуски - вариант 2.Ту же самую задачу последовательной обработки пропусков можно сделать при помощи pipeops.Сначала укажем, какие функции они должны выполнять и сохраним их в соответсвующих объектах
+
+```{r Замена пропущенных значений drive и engV}
+library(mlr3pipelines)
+
+imp_numeric = po("imputemean")
+imp_factor= po("imputeoor")
+
+```
+
+Потом укажем последовательность выполнения. Оператор "%>>%" сопоставим с "%>%" из dplyr - обозначает последовательность. Возможны ветвления, разщепления и
+объединения логики выполнения, поэтому можно вывести нарисованную схему обработки. Важно избегать циклических конструкций - работать не будет.
+
+graph - объект, хранящий последовательность обработки
+plot - отображение схемы
+
+Наша схема самая простая - два последовательных действия
+
+Для того, чтобы обработка выполнилась для нужного нам датасета/задания car_task, нужно его передать в объект graph
+
+```{r}
+graph = imp_numeric %>>%
+imp_factor
+
+graph$plot()
+
+car_task_new = graph$train(car_task)[[1]]
+car_task_new$missings()
+
+```
+Данные подготовлены для дальнейшей работы, теперь можно обучить модель линейной регрессии. Для этого создаем learner и указываем его тип.
+
+```{r}
+learner = lrn("regr.lm")
+```
+
+Делим датасет на обучающую и тестовую выборки:
+
+```{r}
+train_set = sample(car_task_new$nrow, 0.8 * task$nrow)
+test_set = setdiff(seq_len(car_task_new$nrow), train_set)
+```
+
+Тренируем модель, на тестовой выборке. Какие строки относятся к тестовой выборке, а какие к обучающей, определяет индекс строк row_ids.
+
+```{r}
+learner$train(car_task_new,row_ids = train_set)
+```
+
+Смотрим получившуюся модель - регрессия с большим количеством коэффициентов:
+
+```{r}
+print(learner$model)
+```
+
+Есть множество "KPI"(measures) для оценки работы моделей, мы выберем RMSE и MAPE.
+
+https://mlr3.mlr-org.com/reference/mlr_measures.html
+
+Наша линейная модель car_pred_lm. Для работы с тестовой выборкой используем не train, а predict
+
+```{r}
+
+car_pred_lm <- learner$predict(car_task_new, row_ids = test_set)
+
+measures = mlr_measures$mget(c("regr.rmse", "regr.mape"))
+
+car_pred_lm$score(measures)
+
+
+```
+
+Важную роль играет логика разделения датасета на обучающую и тестовую выборки - resampling. Есть несколько подходов: holdout, crossvalidation и т.п.
+https://mlr3book.mlr-org.com/resampling.html
+
+В этом примере будем использовать и holdout, и crossvalidation
+
+Сформируем разбивку при помощи holdout метода. 80% - для обучения, 20% для теста. Применение алгоритма разбивки к датасету функция instantiate
+
+```{r}
+#holdout example
+car_rdesc  = rsmp("holdout", ratio = 0.8)
+car_rdesc $instantiate(car_task_new)
+
+car_rdesc $train_set(1)
+car_rdesc $test_set(1)
+
+intersect(car_rdesc $train_set(1), car_rdesc $test_set(1))
+
+print(car_rdesc)
+
+```
+
+При кроссвалидации instantiate использовать не нужно:
+
+```{r}
+#cv example
+task = car_task_new
+learner = lrn("regr.lm")
+resampling = rsmp("cv", folds = 10L)
+
+rr = resample(task, learner, resampling, store_models = TRUE)
+print(rr)
+```
+Определяем в объекте measures2 список показателей модели, которые интересно посмотреть. Смотрим, что получилось после десятикратной кроссвалидации. Все данные о получившемся результате хранятся в объекте rr. Среднее значение по десяти итерациям выводится при помощи aggregate. Отдельный значения по каждому из десяти прогонов - score. Вывести только сравнение факта и прогноза - prediction.
+
+```{r}
+measures2 = mlr_measures$mget(c("regr.rmse", "regr.mape","regr.mae"))
+
+
+rr$aggregate(measures2)
+rr$score(measures2)
+lrn = rr$learners[[1]]
+#lrn$model
+rr$prediction()
+```
+Можно вывести базовую информацию по итерациям, количество итераций отдельно. А также состав тестовой и обучающей выборок для выбранной итерации, например, для итерации №1:
+
+```{r}
+rr$resampling
+rr$resampling$iters
+str(rr$resampling$test_set(1))
+str(rr$resampling$train_set(1))
+```
+Можно построить прогноз стоимости для автомобиля с заданными параметрами. Если бы мы использовали imputation, то не надо было бы указывать параметр цены.
+Текстовые поля преобразовали в факторы.
+learner - использовавшаяся ранее модель регрессии
+Автомобиль с заданными характеристиками с точки зрения нашей не самой точной модели будет стоить 29 257$
+
+```{r}
+new_car2 <- tibble(body = "crossover",
+              mileage = 10, engV = 2.7,
+              inv_mileage = 1000 / (10 + 1),
+              engType = "Gas", registration = "yes",
+              year = 2012, drive = "full", price =0
+              )
+#если без price, то можно прогнать через po impute
+new_car2 <- new_car2 %>% 
+  mutate_if(is_character, fct_infreq)
+
+car_task2 = TaskRegr$new(id = "Цены автомобилей", backend = new_car2, target = "price")
+
+car_pred_lm2 <- learner$predict(car_task2)
+
+measures = mlr_measures$mget(c("regr.rmse", "regr.mape"))
+
+car_pred_lm2$score(measures)
+
+learner$model
+#learner$predictions()[[1]]
+print(car_pred_lm2)
+
+```
+Можно сделать "клон" датасета car_task_new при помоци метода clone - таким образом изначальный датасет не будет изменяться при преобразовании его копии.
+Если бы не было клонирования, то в car_task_new осталась бы только одна колонка inv_mileage.
+
+"Клонированный" датасет с убранными лишники колонками мы используем для построения графика
+
+plot_learner_prediction строит график зависимости стоимости от inv_mileage
+
+```{r}
+library(mlr3viz)
+car_task_new4 = car_task_new$clone(deep = FALSE)
+task = car_task_new4$select(c("inv_mileage"))
+plot_learner_prediction(learner=learner,task=task)
+```
+
+Если мы оставляем две переменные, то вместо графика получаем плоскость:
+
+```{r}
+car_task_new3 = car_task_new$clone(deep = FALSE)
+task3 = car_task_new3$select(c("inv_mileage","engV"))
+plot_learner_prediction(learner=learner,task=task3)
+```
+Самая интересная часть - сравнение производительности разных методов на одном и том же датасете. Метод regr.ctree в стандартный пакет не вохдит, поэтому грузим mlr3extralearners и partykit, откуда этот алгоритм экспортируется. Создаем список из алгоритмов: learners_test. Сравнивать будем четыре алгоритма.
+
+```{r}
+library(mlr3extralearners)
+library(partykit)
+
+car_task_new5 = car_task_new$clone(deep = FALSE)
+task5 = car_task_new5$select(c("inv_mileage","engV"))
+
+mlr_learners$get("classif.ctree")
+learners_test = list(lrn("regr.lm"),lrn("regr.cv_glmnet"),lrn("regr.rpart"),lrn("regr.ctree"))
+
+```
+Для сравнения алгоритмов, как и в УЦП, используется бенчмаркинг. С точки зрения MLR3 у каждой задачи машинного обучения есть три основных составляющих:
+1.датасет/задание (что логично)
+2.список алгоритмов для обработки датасета (тоже логично)
+3.способ разбивки датасета на тестовую и обучающую выборки (на первый взгляд без этого можно было бы обойтись, но нет)
+
+Указываем все три составляющие дизайна (design) эксперимента 
+
+```{r}
+design = benchmark_grid(
+  tasks = car_task_new5,
+  learners = learners_test,
+  resamplings = rsmp("cv", folds = 10)
+)
+print(design)
+```
+После того, как мы определили, что должно быть в эсперименте, мы запускаем процесс сравнения benchmark.Все результаты хранятся в объекте bmr.
+Сводку по параметрам модели с точки зрения каждого алгоритма можно вывести при помоци метода aggregate
+
+```{r}
+bmr = benchmark(design)
+
+bmr$aggregate(measures2)
+```
+Графики регрессии и показатели каждого алгоритма отдельно:
+
+```{r}
+plot_learner_prediction(learner=learners_test[[1]],task=car_task_new5)
+bmr$aggregate(measures)[1]
+
+```
+```{r}
+plot_learner_prediction(learner=learners_test[[2]],task=car_task_new5)
+bmr$aggregate(measures)[2]
+```
+```{r}
+plot_learner_prediction(learner=learners_test[[3]],task=car_task_new5)
+bmr$aggregate(measures)[3]
+```
+
+```{r}
+plot_learner_prediction(learner=learners_test[[4]],task=car_task_new5)
+bmr$aggregate(measures)[4]
+```
+
+Методы, основанные на "деревьях" для данного датасета с задачей прогнозирования цены справляются лучше.
+
+Ошибка моделей в виде боксплотов:
+
+```{r}
+autoplot(bmr)+ theme(axis.text.x = element_text(angle = 45, hjust = 1)) 
+```
+Можно сделать отельную таблицу со значениями ошибок:
+
+```{r}
+measures = msrs(c("regr.rmse", "regr.mape","regr.mae"))
+performances = bmr$aggregate(measures)
+performances[, .(learner_id, regr.rmse, regr.mape,regr.mae)]
+```
