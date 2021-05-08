@@ -7,7 +7,7 @@ All R packages required for our course are included (hopefully).
 
 You can use this software by unzipping archive to a reasonable folder on your computer. Root of C: or D: drive is recommended. Paths containing non-latin characters or spaces won't work.
 
-After unzipping, run file: `Rportable/startR.cmd`. This should start a new RStudio session after a few moments.
+After unzipping, run file: `Rportable4/startR.cmd`. This should start a new RStudio session after a few moments.
 
 Now you are ready to go. See the  section on configuring R-Studio below.
 
@@ -45,7 +45,7 @@ Please, note that all R-studio settings are stored in your user profile folder (
 
 Рекомендуем использовать специально подготовленную для курса версию R с необходимыми пакетами. Программа не требует установки. Эта версия будет работать на компьютерах с Windows 7-10 32 или 64 бита.
 
-Для запуска программы обязательно распакуйте архив на своем компьютере. Из архива программа запускаться не будет. Рекомендуем использовать корень диска C: или D:, нельзя использовать пути с русскими именами или пробелами. После распаковки должна появиться папка Rportable. Запустите файл `Rportable/startR.cmd`. Подождите несколько секунд, пока не запустится программа RStudio.
+Для запуска программы обязательно распакуйте архив на своем компьютере. Из архива программа запускаться не будет. Рекомендуем использовать корень диска C: или D:, нельзя использовать пути с русскими именами или пробелами. После распаковки должна появиться папка Rportable. Запустите файл `Rportable4/startR.cmd`. Подождите несколько секунд, пока не запустится программа RStudio.
 
 Если все сработало - переходите к пункту "Настройка RStudio" ниже.
 
