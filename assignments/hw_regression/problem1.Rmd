@@ -1,0 +1,249 @@
+---
+title: 'Multiple Regression. Problem 1.'
+author: "<your name here>"
+date: "07 05 2021"
+output: 
+  html_document: 
+    df_print: kable
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preparation
+
+```{r, message=F, warning=F}
+library(car)
+library(GGally)
+library(ggfortify)
+library(modelr)
+library(tidyverse)
+```
+
+
+
+# Problem 1. Fuel economy of cars (3 points)
+
+Let's load the `auto` dataset.
+
+```{r}
+auto <- readRDS('auto.RDS')
+head(auto)
+```
+
+The data contains the following characteristics of 392 cars:
+
+  - `name` - model name
+  - `origin` - country of origin (USA, Europe or Japan)
+  - `year` - model year (19XX)
+  - `engine_liters` - displacement (liters)
+  - `weight_kg` - vehicle weight (kg)
+  - `cylinders` - number of cylinders
+  - `horsepower` - engine horsepower (hp)
+  - `acceleration` - time to accelerate from 0 to 100 kph (sec)
+  - `liters100` - fuel economy (liters per 100 km)
+  
+The dataset is based on the `Auto` dataset available in the `ISLR` package. All units were converted to the metric system.
+
+In this assignment you'll create a model to predict the car's fuel economy (`liters100` variable).
+
+Let's split the dataset into training and test data.
+
+```{r}
+set.seed(12345)
+test_ids <- sample.int(nrow(auto), size = nrow(auto) * 0.2)
+auto_test <- auto[test_ids, ]
+auto_train <- auto[-test_ids, ]
+```
+
+
+## Task 1.1 Explore pairwise correlations
+
+Produce a scatterplot matrix using the `ggpairs()` function with default parameters. Note that `name` is a categorical variable with a large categories count and must be excluded from this analysis. You can use `dplyr::select()` for this.
+
+```{r, message=F, warning=F}
+# Your code here
+
+```
+
+
+The ggpairs() will produce both graphical output and the numerical values for pairwise correlations between all numerical variables. For categorical data only the visualizations will be provided, since the correlation coefficient can't be computed for it.
+
+Write-up your interpretation of the results:
+- Which variables are correlated to the target variable?
+- What is the strongest predictor?
+- Are there any non-linear relationships?
+- What predictors are highly correlated?
+- Is the categorical variable (`origin`) correlated to the target variable?
+
+
+## Task 1.2 The linear model with only direct effects
+
+Produce a linear model for `liters100` with all predictors except `name`. Use the training dataset (`auto_train`) to build the model. Store the model in the `m1` variable.
+
+```{r}
+# Your code here
+
+```
+
+Write your interpretation of the model summary:
+- Is there a relationship between the predictors and the response (according to the F-statistic)?
+- Which predictors appear to have a statistically significatn relationship to the response?
+- What does the coefficient for `year` variable suggest?
+- What does the coefficient for `originEurope` variable suggest?
+
+
+## Task 1.3 Check model assumptions
+
+Use the `autoplot()` function to produce diagnostic plots of the linear regression fit.
+You may find the 1, 2 3 and 6 plots the most informative. To produce them, use: c(1, 2, 3, 6) as a second argument for the `autoplot()` function.
+
+
+```{r}
+# Your code here
+
+```
+
+
+Comment on any problems you see with the fit. Do the residual plots suggest any unusually large outliers? 
+Are there any influential observations? If there are any influential observations - try removing them and comparing what happens to model coefficients if you fit the model to the cleaned data.
+
+
+## Task 1.4. Modeling interactions
+
+Using `ggplot()`, produce a scatterplot for each of the following predictors: `weight_kg`, `engine_liters`, `year`, `horsepower`, `acceleration`. 
+
+In each plot, put the predictor on X, the `liters100` variable on Y. Color the points according the `origin` variable. Add a linear trend line for each color.
+
+Interpret your results. Which predictors interact with the `origin` variable?
+
+
+```{r}
+# Your code here
+```
+
+
+Based on your observations, add interaction terms to the model. 
+
+Store the resulting model in the `m2` variable.
+
+```{r}
+# Your code here
+```
+
+
+Interpret the model summary. Do any interactions appear to be statistically significant? Compare this result to what you've seen in the plots.
+
+
+Using the model summary and the diagnostic plots, consider if the model with interactions is better than the first model.
+
+```{r}
+# Your code here
+```
+
+
+## Task 1.5 Modeling non-linearity
+
+Using `ggplot()` produce a scatterplot for the `cylinders` predictor 
+and the `liters100` variable. Add a non-linear trend line (use `geom_smooth()`
+with default parameters). 
+
+What does the shape of the trend line suggest?
+
+```{r}
+# Your code here
+```
+
+Try including the square and the cube of the `cylinders` variable into the model. Remember to protect the `^` operation with the `I()` function. For example, to include the square, use `I(cylinders^2)`. For your third model choose the one that works the best - either with square, or square + cube. 
+
+Store the resulting model in the `m3` variable.
+
+```{r}
+# Your code here
+```
+
+
+Compare this model with the second one (with interactions) using the summary and the diagnostic plots.
+
+
+```{r}
+# Your code here
+```
+
+
+## Task 1.6 Comparing the models on the test data
+
+Now we'll compare the performance of the models on the new, unseen data. We'll use the `RMSE`, the `MAE` and the `MAPE` metrics for this. These metrics can be computed using the functions in the `modelr` package, for example:
+
+```{r}
+mape(m1, auto_test)
+```
+
+To automate the comparison, we'll create a function that will calculate all the required metrics given a model and a dataset.
+
+```{r}
+errors <- function(model, data) {
+  MAPE <- mape(model, data)
+  MAE <- mae(model, data)
+  RMSE <- rmse(model, data)
+  
+  tibble(MAE, RMSE, MAPE) # returned value
+}
+```
+
+Let's test the function:
+
+```{r}
+errors(m1, auto_test)
+```
+
+
+Now we construct a table containing the model names and the models themselves:
+
+```{r}
+all_models <- 
+  tibble(Name = c("M1, linear", "M2, interactions", "M3, polynomial"), 
+         Model = list(m1, m2, m3))
+
+#all_models
+```
+
+Finally, we map the previously created  `errors()` function to the `Model` column in the table:
+
+
+```{r}
+all_models %>% 
+  mutate(Result = map(Model, errors, data=auto_test)) %>%
+  select(-Model) %>%
+  unnest()
+
+```
+
+Compare this result to the performance on the training data (`auto_train`):
+
+```{r}
+
+# Your code here
+
+```
+
+
+Interpret the results. Are the models performing worse on test data? Which model has the largest drop in performance on test data?
+
+
+Finally, produce 3 scatter plots showing the predicted (on X) and the actual (on Y) fuel economy for all the cars in the `auto_test` data.
+
+
+```{r}
+
+# Your code here
+
+```
+
+
+
+
+
+
