@@ -90,7 +90,7 @@ Produce a linear model for `liters100` with all predictors except `name`. Use th
 
 Write your interpretation of the model summary:
 - Is there a relationship between the predictors and the response (according to the F-statistic)?
-- Which predictors appear to have a statistically significatn relationship to the response?
+- Which predictors appear to have a statistically significant relationship to the response?
 - What does the coefficient for `year` variable suggest?
 - What does the coefficient for `originEurope` variable suggest?
 
