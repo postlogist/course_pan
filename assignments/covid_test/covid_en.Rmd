@@ -1,0 +1,33 @@
+---
+title: "covid"
+author: "Zakhodyakin Gleb"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+A manufacturer of a test for COVID-19 antibodies claims the following 
+test characteristics: 
+
+Testing for IgG antibodies (a person has immunity to COVID):
+
+Specificity = 96.4%
+Sensitivity = 91.8%
+
+
+Testing for IgM antibodies (a person has active COVID infection)
+
+Specificity = 97.3%
+Sensitivity = 95.7%
+
+Let's consider a case for IgM testing. 
+What will be the result of testing 100 000 people with this test. 
+Assume that about 2% of population are currently infected.
+
+How many infected people will be detected?
+How many people will be incorrectly detected as infected (false positives)?
+How many healthy people will get a correct test result?
+How many infected people will the test miss?
+
