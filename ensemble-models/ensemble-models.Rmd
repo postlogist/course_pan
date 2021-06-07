@@ -6,6 +6,7 @@ output:
   html_document: 
     toc: yes
     toc_float: yes
+    df_print: kable
 ---
 
 ```{r setup, include=FALSE}
@@ -449,6 +450,11 @@ fi_xgboost <-
   getFeatureImportance()
 ```
 
+
+```{r}
+names(fi_xgboost)
+```
+
 The extracted feature importance are stored in the `res` element of the object produced by the function.
 Here we extract it and visualize using `ggplot()`.
 
@@ -458,15 +464,14 @@ It is a good idea to create a helper function to plot the feature importance:
 ```{r Helper function for plotting the feature importance}
 plotFeatureImportance <- function(fi_data) {
   fi_data$res %>%
-  gather(key = 'predictor', value = 'importance') %>%
+  gather(key = 'variable', value = 'importance') %>%
   arrange(desc(importance)) %>%
-  ggplot(aes(fct_reorder(predictor, importance), importance)) +
+  ggplot(aes(fct_reorder(variable, importance), importance)) +
   geom_col() +
   coord_flip()
 }
 
 ```
-
 
 
 
