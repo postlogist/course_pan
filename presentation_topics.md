@@ -14,9 +14,7 @@ Rules
  7. Use visualization and examples to support your point as much as possible.
  8. When listening to your peers' presentations, be kind and pay attention. Ask them questions. Participation in a discussion will be awarded with points for participation.
 
-12.04.2022
-
-**Analytics for an Online Retailer: Demand forecasting and Price Optimization at Rue La La**  
+12.04.2022 **Analytics for an Online Retailer: Demand forecasting and Price Optimization at Rue La La**  
 Explain the approach used by the authors for optimizing the prices for an online retailer.
 Focus on the predictive model they have devised. What were the factors considered? What methods were used?
 
@@ -27,9 +25,7 @@ https://www.informs.org/Resource-Center/Video-Library/Innovative-Applications-in
 
 Paper: https://www.hbs.edu/ris/Publication%20Files/kris%20Analytics%20for%20an%20Online%20Retailer_6ef5f3e6-48e7-4923-a2d4-607d3a3d943c.pdf
  
-19.04.2022
-
-**Demand forecasting for the beverage industry using multi-tiered causal analysis**
+19.04.2022 **Demand forecasting for the beverage industry using multi-tiered causal analysis**
 
 Explain the approach to forecasting demand in the beverage industry based on sales data, POS data and inventory levels.
 Why such an approach is important for the beverage industry? How are the different kinds of data combined to produce a forecast? What is demand sensing and demand shaping? How was the model used for demand shaping?
@@ -40,9 +36,7 @@ Resources:
 [1] Chase C. Sensing, shaping and linking demand to a supply: A case study using MTCA //Demand-Driven Forecasting, 2nd ed. Wiley, 2013
 https://yadi.sk/i/RIk9H33RkXSJE
 
-26.04.2022
-
-**Analysis and forecasting of demand during promotions for perishable items**
+26.04.2022 **Analysis and forecasting of demand during promotions for perishable items**
 
 The paper presents the empirical results of modeling demand for perishable items in the retail environment. Analyse the approach used by the authors and provide an overview of the models they tried.  What factors appeared to be useful to predict demand?  Are these factors available when using the models in the real business environment? How the introduction of non-linear terms and interactions between predictors influenced the model's accuracy? How did the authors select the best model? 
 
@@ -52,9 +46,7 @@ Resources:
 https://yadi.sk/d/kEQfgZKuYl542g 
 
 
-17.05.2022
-
-**Predictive analytics at InstaCart**
+17.05.2022 **Predictive analytics at InstaCart**
 
 Explain the role predictive models are playing for managing the supply chain at InstaCart. Elaborate on a few examples (of your choice) of such models and their use. 
 
@@ -71,8 +63,7 @@ Resources:
  - Modeling the unseen https://tech.instacart.com/modeling-the-unseen-6a51c9a02430 
  - The story behind an Instacart order, part 3: predicting the shop https://tech.instacart.com/the-story-behind-an-instacart-order-part-3-predicting-the-shop-d1a3bb9f5d98
 
-23.05.2022
-**Predictive analytics at Uber**
+23.05.2022 **Predictive analytics at Uber**
 
 Explain the role predictive models are playing for managing the supply chain at Uber. Elaborate on a few examples (of your choice) of such models and their use. 
 
