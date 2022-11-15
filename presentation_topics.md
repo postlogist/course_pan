@@ -1,5 +1,6 @@
-Logistics and SCM Predictive Analytics’2022
-Presentation topics
+**Logistics and SCM Predictive Analytics’2022**
+
+# Presentation topics
 
 The goal of the presentation – to learn about practical experience of using predictive analytics in the field of Logistics and SCM.
 
